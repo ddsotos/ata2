@@ -63,3 +63,5 @@ Cloudflare AI の [`typesafe/jev`](https://developers.cloudflare.com/ai/models/t
 ローカルの Wrangler では AI binding が使えない環境があるため、その場合とモデルの応答がない場合は候補からランダムに選び、ゲームを続けます。実際に Jev を使う動作は、Cloudflare アカウントで AI binding を有効にして公開した環境で確認してください。Jev の利用には Cloudflare のモデル利用料金がかかります。利用条件と料金はリンク先で確認してください。
 
 CPUの動作確認は `npm run smoke:cpu`、Jev のリクエスト形式と代替動作の確認は `npm run test:cpu-choice` で実行できます。
+
+Jev の実応答を単独で確認するには、Cloudflare の `CLOUDFLARE_ACCOUNT_ID` と `CLOUDFLARE_API_TOKEN`、または TypeSafe の `TYPESAFE_API_KEY` を環境変数に設定し、`npm exec --yes --package=node@22 -- node --experimental-strip-types scripts/jev-live.mjs` を実行します。スクリプトは CPU と同じ入力を送り、返されたカードが候補内か検査して、モデル名と応答を表示します。キーはリポジトリやチャットに記載しないでください。Cloudflare の Worker 内で Jev が動いたかは、デプロイ後に Worker ログの `CPU Jev choice accepted` で確認できます。代替選択時は理由を含む警告を出します。
