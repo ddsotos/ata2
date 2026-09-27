@@ -64,4 +64,10 @@ Cloudflare AI の [`typesafe/jev`](https://developers.cloudflare.com/ai/models/t
 
 CPUの動作確認は `npm run smoke:cpu`、Jev のリクエスト形式と代替動作の確認は `npm run test:cpu-choice` で実行できます。
 
+### Cloudflare を通さず Jev の入力を試す
+
+Node.js 22 以降で `npm run jev:direct` を実行し、表示される `http://127.0.0.1:8790` を開きます。この環境の Node.js が 22 未満なら、`npm exec --yes --package=node@22 -- node --experimental-strip-types scripts/jev-direct.mjs` で起動できます。画面で回答側・親側の初期入力を選び、お題、候補、指示文または入力 JSON を編集して送信します。生の Jev 応答と選択カードを表示します。
+
+[TypeSafe のダッシュボード](https://console.typesafe.ai/)で取得した API キーを画面に入力するか、起動前に `TYPESAFE_API_KEY` 環境変数へ設定します。キーは画面内では保存しません。TypeSafe API はローカル HTML からのブラウザ直接通信を許可しないため、localhost の Node サーバーが `https://api.typesafe.ai/v1/systemone` に直接送ります。Cloudflare は使いません。送信はボタン操作時だけで、TypeSafe 側の利用料金が発生する可能性があります。
+
 Jev の実応答を単独で確認するには、Cloudflare の `CLOUDFLARE_ACCOUNT_ID` と `CLOUDFLARE_API_TOKEN`、または TypeSafe の `TYPESAFE_API_KEY` を環境変数に設定し、`npm exec --yes --package=node@22 -- node --experimental-strip-types scripts/jev-live.mjs` を実行します。スクリプトは CPU と同じ入力を送り、返されたカードが候補内か検査して、モデル名と応答を表示します。キーはリポジトリやチャットに記載しないでください。Cloudflare の Worker 内で Jev が動いたかは、デプロイ後に Worker ログの `CPU Jev choice accepted` で確認できます。代替選択時は理由を含む警告を出します。

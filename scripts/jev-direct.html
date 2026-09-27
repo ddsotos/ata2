@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jev 入力実験</title>
+  <style>
+    :root { font-family: system-ui, "Noto Sans JP", sans-serif; color: #242b35; background: #f4f6f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 28px 18px 60px; }
+    main { max-width: 1160px; margin: auto; }
+    h1 { margin: 0 0 8px; font-size: clamp(24px, 4vw, 34px); }
+    h2 { margin: 0 0 16px; font-size: 18px; }
+    p { line-height: 1.6; }
+    .intro { color: #596575; margin: 0 0 22px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+    .panel { background: white; border: 1px solid #dce2e8; border-radius: 12px; padding: 20px; box-shadow: 0 6px 28px #2634450b; }
+    .panel + .panel { margin-top: 18px; }
+    label { display: block; margin: 12px 0 5px; font-size: 13px; font-weight: 700; }
+    input, textarea { width: 100%; border: 1px solid #bcc7d2; border-radius: 7px; background: #fff; color: inherit; font: inherit; padding: 10px 12px; }
+    input:focus, textarea:focus { outline: 3px solid #bfdbfe; border-color: #3978bd; }
+    textarea { resize: vertical; min-height: 84px; line-height: 1.5; }
+    #request { min-height: 370px; font: 13px/1.5 ui-monospace, Consolas, monospace; tab-size: 2; }
+    #response { min-height: 440px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; padding: 14px; border-radius: 8px; background: #17212d; color: #e6edf3; font: 13px/1.5 ui-monospace, Consolas, monospace; }
+    .row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; align-items: center; }
+    button { border: 0; border-radius: 7px; padding: 10px 14px; font: inherit; font-weight: 700; cursor: pointer; background: #e7edf4; color: #204266; }
+    button:hover { filter: brightness(.96); }
+    button:disabled { opacity: .5; cursor: default; }
+    .primary { background: #2168a8; color: white; }
+    .danger { color: #9d291e; }
+    .hint { font-size: 12px; color: #5d6977; margin: 8px 0 0; }
+    .status { min-height: 28px; font-size: 14px; font-weight: 700; }
+    .choice { padding: 12px 14px; background: #e8f5eb; border-radius: 8px; margin: 0 0 14px; font-weight: 700; }
+    .choice:empty { display: none; }
+    .cost { background: #fff7e4; border: 1px solid #eacb79; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 12px 0; }
+    .check { display: flex; align-items: flex-start; gap: 9px; font-weight: 400; line-height: 1.5; }
+    .check input { width: auto; margin-top: 4px; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } #response { min-height: 280px; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Jev 入力実験</h1>
+  <p class="intro">ゲームとは独立したローカル画面です。送信すると、この PC から TypeSafe API に直接リクエストします。Cloudflare は通りません。</p>
+  <div class="grid">
+    <div>
+      <section class="panel">
+        <h2>① 入力を作る</h2>
+        <div class="row"><button type="button" id="preset-answer">回答する CPU</button><button type="button" id="preset-dealer">親の CPU</button></div>
+        <label for="theme">お題</label><input id="theme" type="text">
+        <label for="cards">候補カード（1行に1枚）</label><textarea id="cards"></textarea>
+        <label for="instructions">指示文</label><textarea id="instructions"></textarea>
+        <div class="row"><button type="button" id="apply-fields">入力欄を JSON に反映</button></div>
+        <p class="hint">下の JSON は直接編集できます。細かい入力形式もここで試せます。</p>
+        <label for="request">Jev に送る入力 JSON</label><textarea id="request" spellcheck="false"></textarea>
+      </section>
+      <section class="panel">
+        <h2>② 直接送信</h2>
+        <label for="api-key">TypeSafe API キー（環境変数に設定済みなら空欄で可）</label><input id="api-key" type="password" autocomplete="off" placeholder="このページでは保存しません">
+        <p class="hint">キーはブラウザに保存せず、localhost のサーバー経由で TypeSafe に送ります。</p>
+        <div class="cost">実送信は TypeSafe の利用料金が発生する可能性があります。自動送信はしません。サーバー起動中は最大30回までです。</div>
+        <label class="check"><input id="allow-send" type="checkbox">実際の Jev API に送ることを確認しました</label>
+        <div class="row"><button type="button" class="primary" id="send" disabled>Jev に送信</button><span id="status" class="status" role="status"></span></div>
+      </section>
+    </div>
+    <section class="panel">
+      <h2>③ 応答を見る</h2>
+      <p id="choice" class="choice"></p>
+      <pre id="response">送信すると、HTTP 状態・処理時間・Jev の応答を表示します。</pre>
+    </section>
+  </div>
+</main>
+<script id="presets" type="application/json">__PRESETS__</script>
+<script>
+  const sessionToken = '__SESSION_TOKEN__';
+  const presets = JSON.parse(document.querySelector('#presets').textContent);
+  const $ = selector => document.querySelector(selector);
+  let active = false;
+
+  function fillPreset(role) {
+    const input = structuredClone(presets[role]);
+    $('#theme').value = input.state.theme;
+    $('#cards').value = input.state.cards.join('\n');
+    $('#instructions').value = input.questions.card.instructions;
+    $('#request').value = JSON.stringify(input, null, 2);
+    $('#status').textContent = '';
+  }
+
+  $('#preset-answer').addEventListener('click', () => fillPreset('answer'));
+  $('#preset-dealer').addEventListener('click', () => fillPreset('dealer'));
+  $('#apply-fields').addEventListener('click', () => {
+    const cards = $('#cards').value.split(/\r?\n/).map(card => card.trim()).filter(Boolean);
+    if (!cards.length) { $('#status').textContent = '候補カードを1枚以上入力してください'; return; }
+    let input;
+    try { input = JSON.parse($('#request').value); }
+    catch { input = structuredClone(presets.answer); }
+    input.state = { theme: $('#theme').value, cards };
+    input.questions ??= {};
+    input.questions.card = {
+      type: 'choice',
+      instructions: $('#instructions').value,
+      criteria: Object.fromEntries(cards.map((card, index) => [`card_${index}`, card])),
+    };
+    $('#request').value = JSON.stringify(input, null, 2);
+    $('#status').textContent = 'JSON に反映しました';
+  });
+  $('#allow-send').addEventListener('change', () => { $('#send').disabled = !$('#allow-send').checked || active; });
+
+  $('#send').addEventListener('click', async () => {
+    let input;
+    try { input = JSON.parse($('#request').value); }
+    catch (error) { $('#status').textContent = `JSON の形式が正しくありません: ${error.message}`; return; }
+    active = true;
+    $('#send').disabled = true;
+    $('#status').textContent = 'TypeSafe に送信中…';
+    $('#choice').textContent = '';
+    try {
+      const response = await fetch('/api/jev', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Session-Token': sessionToken },
+        body: JSON.stringify({ input, apiKey: $('#api-key').value }),
+      });
+      const data = await response.json();
+      $('#response').textContent = JSON.stringify(data, null, 2);
+      if (!response.ok || data.status >= 400) {
+        $('#status').textContent = `送信失敗: ${data.error ?? `HTTP ${data.status}`}`;
+      } else {
+        const choice = data.result?.answers?.card?.choice;
+        const card = typeof choice === 'string' ? input.questions?.card?.criteria?.[choice] : null;
+        if (choice) $('#choice').textContent = `選択: ${choice}${card ? ` — ${card}` : ''}`;
+        $('#status').textContent = `応答あり · ${data.elapsedMs} ms · 残り ${data.remainingThisRun} 回`;
+      }
+    } catch (error) {
+      $('#status').textContent = `通信エラー: ${error.message}`;
+    } finally {
+      active = false;
+      $('#send').disabled = !$('#allow-send').checked;
+    }
+  });
+
+  fillPreset('answer');
+</script>
+</body>
+</html>
