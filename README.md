@@ -1,0 +1,56 @@
+# 私の世界の見方 オンライン
+
+「私の世界の見方」を友人同士で遊ぶための招待制 Web アプリです。画面とサーバー処理は新規実装し、カード内容には既存 ata の[単語カード](https://github.com/ddsotos/ata/blob/main/game_server/ata_things.json)と[お題カード](https://github.com/ddsotos/ata/blob/main/game_server/ata_descriptions.json)を使います。
+
+## ローカルで起動
+
+必要環境: Node.js 22 以降、npm。
+
+```sh
+npm install
+npm run dev
+```
+
+`wrangler dev` がローカル Worker、Durable Object、画面をまとめて起動します。表示されたローカル URL を開き、別のブラウザまたはプライベートウィンドウを使って2人以上で試せます。Cloudflare アカウントへのログインはローカル起動には不要です。
+
+手元の Node.js が18系で、システム全体の更新を避けたい場合は、ビルド後に一時的な Node.js 22 で Wrangler を起動できます。
+
+```sh
+npm run build
+npm exec --yes --package=node@22 -- wrangler dev
+```
+
+別のターミナルで `npm exec --yes --package=node@22 -- node scripts/smoke.mjs` を実行すると、部屋作成から5点到達、切断復帰、観戦者の参加、リセット、除外まで確認できます。
+
+## Cloudflare へ公開
+
+1. Cloudflare アカウントを用意し、`npx wrangler login` を実行します。
+2. `wrangler.toml` の Worker 名を自分のアカウント内で使う名前に変更します。
+3. `npm run deploy` を実行します。初回公開では SQLite Durable Object の `GameRoom` クラスが作成されます。
+4. 発行された `workers.dev` URL を開いて部屋を作成し、別ブラウザで招待 URL から入室します。
+
+ログイン前の公開確認には `npx wrangler deploy --temporary` も使えます。一時アカウントには引き取り期限があり、継続利用するには表示された引き取り URL から自分の Cloudflare アカウントへ紐づけてください。引き取り URL は秘密情報として扱います。
+
+公開 URL を別の実端末で開き、1台は Wi-Fi、もう1台は携帯回線で参加・回答・切断復帰を確認すると、ローカル表示では分からない接続問題を検出できます。
+
+利用状況と Durable Objects の無料枠を Cloudflare ダッシュボードで定期的に確認してください。公開 URL を独自ドメインに割り当てる場合は Cloudflare DNS で設定します。
+
+## 遊び方
+
+- 作成者が部屋を作り、招待 URL または QR コードを共有します。
+- 2〜8人が参加し、全員が「準備完了」にしたら作成者が開始します。
+- 親以外は5枚の手札から1枚を選び、確定ボタンで提出します。親も手札を見られますが、そのラウンドでは選択できません。
+- 親は回答を1枚ずつ公開し、一番好きな回答を選んで確定します。公開済みの回答を表示したまま選ばれた1枚を強調し、3秒のカウントダウン後に回答者と得点を公開します。
+- プレイヤーの回答が選ばれるとその人が1点、ダミーが選ばれると親が1点減点（0点が下限）です。
+- 5点に達した人が出たラウンドの結果後にゲーム終了です。同じ部屋で再戦できます。
+- プレイヤーが切断するとゲームを止めます。本人の復帰で自動再開し、戻らない場合は作成者が除外できます。
+- 作成者が2分間戻らない場合、接続中で入室が最も早いプレイヤーへ管理を引き継ぎます。
+
+## 構成
+
+- `src/`: TypeScript の UI、スマートフォン対応スタイル
+- `worker/`: 部屋 API、WebSocket、ゲーム進行と Durable Object
+- `data/`: 再利用するカード JSON
+- `wrangler.toml`: Workers、静的アセット、SQLite Durable Object の設定
+
+ゲーム状態は Durable Object の SQLite ストレージに保存し、24時間操作のない部屋を削除します。プレイヤーの手札は認証済みの本人にだけ配信します。アカウント登録はなく、復帰用トークンをブラウザのローカルストレージに保存します。
