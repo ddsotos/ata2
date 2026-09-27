@@ -84,8 +84,8 @@
     activeRole = role;
     const input = structuredClone(presets[role]);
     $('#theme').value = input.state.theme;
-    $('#cards').value = input.state.cards.join('\n');
-    $('#instructions').value = input.questions.card.instructions;
+    $('#cards').value = input.state.choices.join('\n');
+    $('#instructions').value = input.questions.choice.instructions;
     $('#request').value = JSON.stringify(input, null, 2);
     $('#status').textContent = '';
   }
@@ -114,12 +114,13 @@
     let input;
     try { input = JSON.parse($('#request').value); }
     catch { input = structuredClone(presets?.[activeRole] ?? { state: {}, questions: {} }); }
-    input.state = { theme: $('#theme').value, cards };
+    input.state = { theme: $('#theme').value, choices: cards };
     input.questions ??= {};
-    input.questions.card = {
+    delete input.questions.card;
+    input.questions.choice = {
       type: 'choice',
       instructions: $('#instructions').value,
-      criteria: Object.fromEntries(cards.map((card, index) => [`card_${index}`, card])),
+      criteria: Object.fromEntries(cards.map((card, index) => [`choice_${index}`, card])),
     };
     $('#request').value = JSON.stringify(input, null, 2);
     $('#status').textContent = 'JSON に反映しました';
@@ -145,8 +146,8 @@
       if (!response.ok || data.status >= 400) {
         $('#status').textContent = `送信失敗: ${data.error ?? `HTTP ${data.status}`}`;
       } else {
-        const choice = data.result?.answers?.card?.choice;
-        const card = typeof choice === 'string' ? input.questions?.card?.criteria?.[choice] : null;
+        const choice = data.result?.answers?.choice?.choice;
+        const card = typeof choice === 'string' ? input.questions?.choice?.criteria?.[choice] : null;
         if (choice) $('#choice').textContent = `選択: ${choice}${card ? ` — ${card}` : ''}`;
         $('#status').textContent = `応答あり · ${data.elapsedMs} ms · 残り ${data.remainingThisRun} 回`;
       }

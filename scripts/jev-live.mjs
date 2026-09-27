@@ -36,8 +36,8 @@ if (url) {
     process.exitCode = 1;
   } else {
     const result = body.result ?? body;
-    const choice = result.answers?.card?.choice;
-    const selectedIndex = typeof choice === 'string' && /^card_\d+$/.test(choice) ? Number(choice.slice(5)) : -1;
+    const choice = result.answers?.choice?.choice;
+    const selectedIndex = typeof choice === 'string' && /^choice_\d+$/.test(choice) ? Number(choice.slice(7)) : -1;
     if (selectedIndex < 0 || selectedIndex >= candidates.length) {
       console.error('Jev の回答が候補外です:', JSON.stringify(result));
       process.exitCode = 1;

@@ -33,8 +33,8 @@ async function loadSample(newCombination) {
   const candidates = sample.cardIndices.map(index => cards[index]);
   const answer = createCpuJevInput(theme, candidates, 'answer');
   const dealer = createCpuJevInput(theme, candidates, 'dealer');
-  answer.questions.card.instructions = prompts.answer;
-  dealer.questions.card.instructions = prompts.dealer;
+  answer.questions.choice.instructions = prompts.answer;
+  dealer.questions.choice.instructions = prompts.dealer;
   return { answer, dealer, source: { cards: 'data/ata_things.json', themes: 'data/ata_descriptions.json', instructions: 'data/jev_prompts.json' } };
 }
 

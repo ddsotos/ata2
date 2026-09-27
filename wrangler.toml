@@ -16,9 +16,17 @@ not_found_handling = "single-page-application"
 name = "ROOMS"
 class_name = "GameRoom"
 
+[[durable_objects.bindings]]
+name = "JEV_BUDGET"
+class_name = "JevBudget"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["GameRoom"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["JevBudget"]
 
 [observability]
 enabled = true

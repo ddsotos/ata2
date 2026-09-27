@@ -27,6 +27,13 @@ try {
   assert.equal(state.players[1].cpu, true);
   assert.equal(state.players[1].ready, true);
   assert.equal(state.players[1].online, true);
+  assert.ok(state.cpuDefaults.answer.includes('themeとの噛み合い'));
+  assert.equal(state.cpuPrompts[state.players[1].id].answer, state.cpuDefaults.answer);
+  const publicView = await (await fetch(`${base}/api/rooms/${room.roomId}`)).json();
+  assert.equal(publicView.cpuPrompts, undefined, 'CPU instructions should only be sent to the owner');
+  send('updateCpuPrompts', { memberId: state.players[1].id, prompts: { answer: '独自の回答用指示文', dealer: '独自の親用指示文' } });
+  await wait(s => s?.cpuPrompts?.[s.players[1].id]?.answer === '独自の回答用指示文', 'CPU prompts updated');
+  assert.equal(state.cpuPrompts[state.players[1].id].dealer, '独自の親用指示文');
   send('ready');
   await wait(s => s?.readyToStart, 'ready to start');
   send('start');

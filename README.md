@@ -58,9 +58,15 @@ npm exec --yes --package=node@22 -- wrangler dev
 
 ## Jev CPU
 
-Cloudflare AI の [`typesafe/jev`](https://developers.cloudflare.com/ai/models/typesafe/jev/) を Worker の AI binding から呼びます。回答者のCPUはお題と5枚の手札、親のCPUはお題と公開済みの回答から、Jev の Choice で1枚を選びます。候補以外のカードは採用しません。
+Worker から TypeSafe API の Jev、または Cloudflare AI の [`typesafe/jev`](https://developers.cloudflare.com/ai/models/typesafe/jev/) を呼びます。回答者のCPUはお題と5枚の手札、親のCPUはお題と公開済みの回答から、Jev の Choice で1枚を選びます。候補以外のカードは採用しません。
 
-ローカルの Wrangler では AI binding が使えない環境があるため、その場合とモデルの応答がない場合は候補からランダムに選び、ゲームを続けます。実際に Jev を使う動作は、Cloudflare アカウントで AI binding を有効にして公開した環境で確認してください。Jev の利用には Cloudflare のモデル利用料金がかかります。利用条件と料金はリンク先で確認してください。
+部屋の管理者は待機画面でCPUを追加するとき、回答側と親側の指示文をCPUごとに設定できます。追加済みのCPUはプレイヤー一覧の「指示文」から変更できます。初期値は `data/jev_prompts.json` です。変更はゲーム開始前に行い、その部屋に保存されます。管理者が交代した場合は新しい管理者が設定を編集できます。
+
+オンライン版は、Worker Secret `TYPESAFE_API_KEY` が設定されていれば Worker から TypeSafe API の `jev-latest` を直接呼びます。未設定なら Cloudflare AI binding を使います。どちらも失敗した場合は、ゲームを続けるためランダム選択に切り替わります。キーをブラウザーや部屋の保存データへ渡す必要はありません。`wrangler.toml` の通常の変数やフロントエンドのコードには置かないでください。
+
+現在の Cloudflare AI binding では `Insufficient AI Gateway credits` が確認されています。オンラインで Jev を使うには、Cloudflare ダッシュボードで Workers & Pages → `watashi-no-sekai-online` → Settings → Variables and Secrets → Add を開き、Type を **Secret**、名前を `TYPESAFE_API_KEY`、値を取得済みの TypeSafe APIキーにして Deploy してください。画面の「Jev接続」が「TypeSafe API（Worker Secret）」になれば、切り替えは完了です。CLI からは `npx wrangler secret put TYPESAFE_API_KEY` でも登録できます。API利用料はキーの契約に従って発生します。公開サイト全体で TypeSafe への送信を UTC の1日あたり200回に制限します。この制限は正確な金額上限ではなく、他のアプリからの利用も含みません。
+
+ローカルの Wrangler では AI binding が使えない環境があるため、その場合とモデルの応答がない場合は候補からランダムに選び、ゲームを続けます。Jev の実応答は、TypeSafe Secret を設定した公開環境か、下記の直接実験画面で確認できます。料金は利用する経路の契約条件を確認してください。
 
 CPUの動作確認は `npm run smoke:cpu`、Jev のリクエスト形式と代替動作の確認は `npm run test:cpu-choice` で実行できます。
 

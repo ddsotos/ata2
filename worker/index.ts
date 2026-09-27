@@ -1,10 +1,10 @@
 import thingsJson from '../data/ata_things.json';
 import descriptionsJson from '../data/ata_descriptions.json';
-import { chooseCpuCard, type JevBinding } from './cpu';
+import { chooseCpuCard, defaultCpuPrompts, type CpuPrompts, type JevBinding, typeSafeJevBinding } from './cpu';
 
-type Env = { ROOMS: DurableObjectNamespace; ASSETS: Fetcher; AI?: JevBinding };
+type Env = { ROOMS: DurableObjectNamespace; JEV_BUDGET: DurableObjectNamespace; ASSETS: Fetcher; AI?: JevBinding; TYPESAFE_API_KEY?: string };
 type Card = { name: string; type?: number };
-type Member = { id: string; name: string; tokenHash: string; spectator: boolean; ready: boolean; cpu?: boolean };
+type Member = { id: string; name: string; tokenHash: string; spectator: boolean; ready: boolean; cpu?: boolean; cpuPrompts?: CpuPrompts };
 type Player = Member & { spectator: false; score: number; hand: number[]; selection?: number };
 type Answer = { cardId: number; playerId: string | null };
 type Game = {
@@ -26,6 +26,35 @@ const OWNER_GRACE = 2 * 60 * 1000;
 const RESULT_COUNTDOWN = 3000;
 const CPU_DELAY = 900;
 const CPU_RESULT_DELAY = 3000;
+const MAX_CPU_PROMPT_LENGTH = 2000;
+const TYPESAFE_DAILY_LIMIT = 200;
+
+export class JevBudget {
+  constructor(private readonly state: DurableObjectState) {}
+
+  async fetch(request: Request): Promise<Response> {
+    if (request.method !== 'POST' || new URL(request.url).pathname !== '/claim') return json({ error: 'Not found' }, 404);
+    const day = new Date().toISOString().slice(0, 10);
+    return this.state.storage.transaction(async storage => {
+      const current = await storage.get<{ day: string; count: number }>('daily');
+      const count = current?.day === day ? current.count : 0;
+      if (count >= TYPESAFE_DAILY_LIMIT) return json({ error: 'Jevの1日あたりの送信上限に達しました' }, 429);
+      await storage.put('daily', { day, count: count + 1 });
+      return json({ remaining: TYPESAFE_DAILY_LIMIT - count - 1 });
+    });
+  }
+}
+
+function safeCpuPrompts(value: unknown): CpuPrompts {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('CPUの指示文を入力してください');
+  const input = value as Record<string, unknown>;
+  const answer = typeof input.answer === 'string' ? input.answer.trim() : '';
+  const dealer = typeof input.dealer === 'string' ? input.dealer.trim() : '';
+  if (!answer || !dealer || [...answer].length > MAX_CPU_PROMPT_LENGTH || [...dealer].length > MAX_CPU_PROMPT_LENGTH) {
+    throw new Error(`CPUの指示文は回答側・親側とも1〜${MAX_CPU_PROMPT_LENGTH}文字で入力してください`);
+  }
+  return { answer, dealer };
+}
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -151,6 +180,9 @@ export class GameRoom {
       dealerId: game.dealerId, ownerId: game.ownerId, youId: memberId ?? null,
       youAreOwner: memberId === game.ownerId, spectator: !!me && !game.players.some(p => p.id === memberId),
       players: game.players.map(p => ({ id: p.id, name: p.name, score: p.score, ready: p.ready, online: online.has(p.id), isDealer: p.id === game.dealerId, cpu: !!p.cpu })),
+      cpuDefaults: memberId === game.ownerId ? defaultCpuPrompts : undefined,
+      cpuPrompts: memberId === game.ownerId ? Object.fromEntries(game.players.filter(p => p.cpu).map(p => [p.id, p.cpuPrompts ?? defaultCpuPrompts])) : undefined,
+      cpuProvider: memberId === game.ownerId ? this.env.TYPESAFE_API_KEY ? 'typesafe' : 'cloudflare' : undefined,
       spectators: game.spectators.length, answers, revealed: game.revealed,
       chosenCard: game.phase === 'countdown' && game.chosenIndex !== undefined ? things[game.answers[game.chosenIndex].cardId].name : null,
       chosenIndex: game.phase === 'countdown' ? game.chosenIndex ?? null : null,
@@ -267,7 +299,8 @@ export class GameRoom {
       const player = game.players.find(p => p.cpu && p.id !== game.dealerId && p.selection === undefined)!;
       const round = game.round; const hand = [...player.hand];
       const theme = descriptions[game.currentDescription!].name;
-      const index = await chooseCpuCard(this.env.AI, theme, hand.map(id => things[id].name), 'answer');
+      const ai = this.cpuAi();
+      const index = await chooseCpuCard(ai, theme, hand.map(id => things[id].name), 'answer', (player.cpuPrompts ?? defaultCpuPrompts).answer);
       if (this.game !== game || game.paused || game.phase !== 'selecting' || game.round !== round || !game.players.includes(player) || player.selection !== undefined) return;
       const cardId = hand[index];
       if (player.hand.includes(cardId)) this.selectCard(player, cardId);
@@ -277,11 +310,27 @@ export class GameRoom {
       if (game.revealed < game.answers.length) { game.revealed++; return; }
       const round = game.round; const answers = game.answers;
       const theme = descriptions[game.currentDescription!].name;
-      const index = await chooseCpuCard(this.env.AI, theme, answers.map(answer => things[answer.cardId].name), 'dealer');
+      const dealer = game.players.find(p => p.id === game.dealerId)!;
+      const ai = this.cpuAi();
+      const index = await chooseCpuCard(ai, theme, answers.map(answer => things[answer.cardId].name), 'dealer', (dealer.cpuPrompts ?? defaultCpuPrompts).dealer);
       if (this.game !== game || game.paused || game.phase !== 'reveal' || game.round !== round || game.answers !== answers || game.revealed !== answers.length) return;
       this.chooseAnswer(index); return;
     }
     if (game.phase === 'roundResult') this.advanceRound();
+  }
+
+  private cpuAi(): JevBinding | undefined {
+    const key = this.env.TYPESAFE_API_KEY;
+    if (!key) return this.env.AI;
+    const direct = typeSafeJevBinding(key);
+    return {
+      run: async (model, input) => {
+        const budget = this.env.JEV_BUDGET.get(this.env.JEV_BUDGET.idFromName('global'));
+        const claim = await budget.fetch('https://budget/claim', { method: 'POST' });
+        if (!claim.ok) throw new Error(`TypeSafe daily request limit (${TYPESAFE_DAILY_LIMIT}) reached`);
+        return direct.run(model, input);
+      },
+    };
   }
 
   private finishCountdown(): void {
@@ -377,9 +426,18 @@ export class GameRoom {
         case 'addCpu': {
           this.assertOwner(memberId);
           if (game.phase !== 'lobby' || game.players.length >= MAX_PLAYERS) throw new Error('待機中で空席があるときにCPUを追加できます');
+          const cpuPrompts = payload.prompts === undefined ? { ...defaultCpuPrompts } : safeCpuPrompts(payload.prompts);
           const used = new Set(game.players.map(player => player.name));
           let number = 1; while (used.has(`CPU ${number}`)) number++;
-          game.players.push({ id: randomId(16), name: `CPU ${number}`, tokenHash: randomId(32), spectator: false, ready: true, cpu: true, score: 0, hand: [] });
+          game.players.push({ id: randomId(16), name: `CPU ${number}`, tokenHash: randomId(32), spectator: false, ready: true, cpu: true, cpuPrompts, score: 0, hand: [] });
+          break;
+        }
+        case 'updateCpuPrompts': {
+          this.assertOwner(memberId);
+          if (game.phase !== 'lobby') throw new Error('CPUの指示文は待機中に変更してください');
+          const player = game.players.find(p => p.id === payload.memberId && p.cpu);
+          if (!player) throw new Error('CPUが見つかりません');
+          player.cpuPrompts = safeCpuPrompts(payload.prompts);
           break;
         }
         case 'ready': {

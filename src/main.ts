@@ -3,6 +3,7 @@ import { parseRoomId } from './room-code';
 import './style.css';
 
 type Player = { id: string; name: string; score: number; ready: boolean; online: boolean; isDealer: boolean; cpu: boolean };
+type CpuPrompts = { answer: string; dealer: string };
 type Snapshot = {
   id: string; phase: 'lobby' | 'selecting' | 'reveal' | 'countdown' | 'roundResult' | 'finished'; paused: boolean; pauseReason?: string;
   round: number; currentDescription: string | null; dealerId: string; ownerId: string; youId: string | null;
@@ -11,6 +12,7 @@ type Snapshot = {
   chosenCard: string | null; chosenIndex: number | null; countdownEndsAt: number | null; serverNow: number;
   result: { winnerId: string | null; winnerName: string | null; card: string; dummy: boolean } | null;
   hand: { id: number; name: string }[]; yourSelection: number | null; readyToStart: boolean;
+  cpuDefaults?: CpuPrompts; cpuPrompts?: Record<string, CpuPrompts>; cpuProvider?: 'typesafe' | 'cloudflare';
 };
 type RoomCredential = { roomId: string; memberId: string; token: string; owner: boolean; spectator?: boolean; message?: string };
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -28,6 +30,7 @@ let countdownTarget: { endsAt: number; localTime: number } | null = null;
 let countdownTimer: number | undefined;
 let scoreEffect: { playerId: string; name: string; delta: number } | null = null;
 let scoreEffectTimer: number | undefined;
+let cpuEditor: { memberId: string | null; prompts: CpuPrompts } | null = null;
 
 function esc(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
@@ -90,6 +93,7 @@ function enter(next: RoomCredential): void {
   socket?.close();
   notice = ''; qrOpen = false; qrDataUrl = '';
   selectionDraft = null; selectionSending = false; countdownTarget = null; scoreEffect = null;
+  cpuEditor = null;
   credential = next; localStorage.setItem(storedKey(next.roomId), JSON.stringify(next));
   history.pushState({}, '', `/r/${next.roomId}`); snapshot = null; connect();
 }
@@ -160,6 +164,7 @@ function playerList(game: Snapshot): string {
       <span class="avatar">${esc([...player.name][0] ?? '？')}</span>
       <span class="player-copy"><b>${esc(player.name)}${player.id === game.youId ? '<small>あなた</small>' : ''}</b><small>${player.isDealer ? player.cpu ? '親 · CPU' : '親' : player.cpu ? game.phase === 'lobby' ? '準備OK' : 'CPU' : player.ready && game.phase === 'lobby' ? '準備OK' : game.phase === 'lobby' ? '準備中' : player.online ? '参加中' : '切断中'}</small></span>
       <span class="score">${player.score}<small>点</small>${scoreEffect?.playerId === player.id ? `<em>${scoreEffect.delta > 0 ? '+1' : '−1'}</em>` : ''}</span>
+      ${game.youAreOwner && game.phase === 'lobby' && player.cpu ? `<button class="button cpu-settings-button" data-edit-cpu="${esc(player.id)}">指示文</button>` : ''}
       ${game.youAreOwner && player.id !== game.ownerId ? `<button class="icon-button remove" data-remove="${esc(player.id)}" aria-label="${esc(player.name)}を除外">×</button>` : ''}
     </li>`).join('');
 }
@@ -180,7 +185,9 @@ function renderRoom(): void {
       <div id="qr-panel" class="qr-panel" ${qrOpen ? '' : 'hidden'}><img id="qr-image" src="${qrDataUrl}" alt="部屋への招待QRコード"><p>スマートフォンで読み取って参加</p></div>
       <div class="stage-actions">${activePlayer ? `<button class="button ${game.players.find(p => p.id === game.youId)?.ready ? 'secondary' : 'primary'}" id="ready">${game.players.find(p => p.id === game.youId)?.ready ? '準備OK ✓' : '準備完了'}</button>` : '<span class="pill">観戦で参加中 · 次のゲームから参加できます</span>'}
       ${game.youAreOwner && game.players.length < 8 ? '<button class="button secondary" id="add-cpu">CPUを追加</button>' : ''}
-      ${game.youAreOwner ? `<button class="button primary" id="start" ${game.readyToStart ? '' : 'disabled'}>ゲームを始める <span>→</span></button>` : ''}</div></section>`;
+      ${game.youAreOwner ? `<button class="button primary" id="start" ${game.readyToStart ? '' : 'disabled'}>ゲームを始める <span>→</span></button>` : ''}</div>
+      ${game.youAreOwner ? `<p class="cpu-provider">Jev接続: ${game.cpuProvider === 'typesafe' ? 'TypeSafe API（Worker Secret）' : 'Cloudflare AI binding'}</p>` : ''}
+      ${game.youAreOwner && cpuEditor ? `<form id="cpu-editor" class="cpu-editor"><h3>${cpuEditor.memberId ? `${esc(game.players.find(p => p.id === cpuEditor!.memberId)?.name)}の指示文` : '新しいCPUの指示文'}</h3><p>回答側と親側をそれぞれ設定できます。ゲーム開始後は変更できません。</p><label for="cpu-answer-prompt">回答側</label><textarea id="cpu-answer-prompt" name="answer" maxlength="2000" required>${esc(cpuEditor.prompts.answer)}</textarea><label for="cpu-dealer-prompt">親側</label><textarea id="cpu-dealer-prompt" name="dealer" maxlength="2000" required>${esc(cpuEditor.prompts.dealer)}</textarea><div class="cpu-editor-actions"><button type="button" class="button secondary" id="cpu-default-prompts">初期文に戻す</button><button type="button" class="button secondary" id="cpu-editor-cancel">キャンセル</button><button type="submit" class="button primary">${cpuEditor.memberId ? '指示文を保存' : 'この設定でCPUを追加'}</button></div></form>` : ''}</section>`;
   } else if (game.phase === 'selecting') {
     const dealer = game.youId === game.dealerId;
     const selected = game.yourSelection !== null;
@@ -241,7 +248,32 @@ function bindRoomEvents(game: Snapshot, inviteUrl: string): void {
     }
   });
   document.querySelector('#ready')?.addEventListener('click', () => send('ready'));
-  document.querySelector('#add-cpu')?.addEventListener('click', () => send('addCpu'));
+  document.querySelector('#add-cpu')?.addEventListener('click', () => {
+    cpuEditor = { memberId: null, prompts: { ...(game.cpuDefaults ?? { answer: '', dealer: '' }) } }; renderRoom();
+  });
+  document.querySelectorAll<HTMLElement>('[data-edit-cpu]').forEach(button => button.addEventListener('click', () => {
+    const memberId = button.dataset.editCpu!;
+    cpuEditor = { memberId, prompts: { ...(game.cpuPrompts?.[memberId] ?? game.cpuDefaults ?? { answer: '', dealer: '' }) } }; renderRoom();
+  }));
+  document.querySelector<HTMLTextAreaElement>('#cpu-answer-prompt')?.addEventListener('input', event => {
+    if (cpuEditor) cpuEditor.prompts.answer = (event.currentTarget as HTMLTextAreaElement).value;
+  });
+  document.querySelector<HTMLTextAreaElement>('#cpu-dealer-prompt')?.addEventListener('input', event => {
+    if (cpuEditor) cpuEditor.prompts.dealer = (event.currentTarget as HTMLTextAreaElement).value;
+  });
+  document.querySelector<HTMLFormElement>('#cpu-editor')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const prompts = { answer: (form.elements.namedItem('answer') as HTMLTextAreaElement).value, dealer: (form.elements.namedItem('dealer') as HTMLTextAreaElement).value };
+    if (cpuEditor?.memberId) send('updateCpuPrompts', { memberId: cpuEditor.memberId, prompts });
+    else send('addCpu', { prompts });
+    cpuEditor = null; renderRoom();
+  });
+  document.querySelector('#cpu-default-prompts')?.addEventListener('click', () => {
+    if (!cpuEditor || !game.cpuDefaults) return;
+    cpuEditor.prompts = { ...game.cpuDefaults }; renderRoom();
+  });
+  document.querySelector('#cpu-editor-cancel')?.addEventListener('click', () => { cpuEditor = null; renderRoom(); });
   document.querySelector('#start')?.addEventListener('click', () => send('start'));
   document.querySelector('#reveal')?.addEventListener('click', () => send('reveal'));
   document.querySelector('#advance')?.addEventListener('click', () => send('advance'));

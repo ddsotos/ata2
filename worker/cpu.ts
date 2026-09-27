@@ -1,15 +1,32 @@
 import prompts from '../data/jev_prompts.json' with { type: 'json' };
 
 export type JevBinding = { run(model: string, input: unknown): Promise<unknown> };
+export type CpuPrompts = { answer: string; dealer: string };
+export const defaultCpuPrompts: CpuPrompts = { answer: prompts.answer, dealer: prompts.dealer };
 
-export function createCpuJevInput(theme: string, candidates: string[], role: 'answer' | 'dealer') {
+export function typeSafeJevBinding(apiKey: string): JevBinding {
   return {
-    state: { theme, cards: candidates },
+    async run(_model, input) {
+      const response = await fetch('https://api.typesafe.ai/v1/systemone', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...(input as Record<string, unknown>), model: 'jev-latest' }),
+        signal: AbortSignal.timeout(3500),
+      });
+      if (!response.ok) throw new Error(`TypeSafe HTTP ${response.status}`);
+      return response.json();
+    },
+  };
+}
+
+export function createCpuJevInput(theme: string, candidates: string[], role: 'answer' | 'dealer', instructions = defaultCpuPrompts[role]) {
+  return {
+    state: { theme, choices: candidates },
     questions: {
-      card: {
+      choice: {
         type: 'choice',
-        instructions: prompts[role],
-        criteria: Object.fromEntries(candidates.map((name, index) => [`card_${index}`, name])),
+        instructions,
+        criteria: Object.fromEntries(candidates.map((name, index) => [`choice_${index}`, name])),
       },
     },
   };
@@ -26,19 +43,20 @@ export async function chooseCpuCard(
   theme: string,
   candidates: string[],
   role: 'answer' | 'dealer',
+  instructions = defaultCpuPrompts[role],
 ): Promise<number> {
   if (!candidates.length) throw new Error('CPUに選べるカードがありません');
   if (candidates.length === 1) return 0;
   try {
     if (!ai) throw new Error('Jev binding unavailable');
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    const request = ai.run('typesafe/jev', createCpuJevInput(theme, candidates, role));
+    const request = ai.run('typesafe/jev', createCpuJevInput(theme, candidates, role, instructions));
     const response = await Promise.race([
       request,
       new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Jev timed out')), 4000); }),
-    ]).finally(() => { if (timeout) clearTimeout(timeout); }) as { answers?: { card?: { choice?: unknown } } };
-    const choice = response.answers?.card?.choice;
-    const index = typeof choice === 'string' && /^card_\d+$/.test(choice) ? Number(choice.slice(5)) : -1;
+    ]).finally(() => { if (timeout) clearTimeout(timeout); }) as { answers?: { choice?: { choice?: unknown } } };
+    const choice = response.answers?.choice?.choice;
+    const index = typeof choice === 'string' && /^choice_\d+$/.test(choice) ? Number(choice.slice(7)) : -1;
     if (index >= 0 && index < candidates.length) {
       console.info('CPU Jev choice accepted', { role, choice });
       return index;
