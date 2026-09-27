@@ -1,12 +1,17 @@
 import thingsJson from '../data/ata_things.json';
 import descriptionsJson from '../data/ata_descriptions.json';
-import { chooseCpuCard, defaultCpuPrompts, type CpuPrompts, type JevBinding, typeSafeJevBinding } from './cpu';
+import { chooseCpuCardDetailed, defaultCpuPrompts, type CpuDecision, type CpuPrompts, type JevBinding, typeSafeJevBinding } from './cpu';
 
 type Env = { ROOMS: DurableObjectNamespace; JEV_BUDGET: DurableObjectNamespace; ASSETS: Fetcher; AI?: JevBinding; TYPESAFE_API_KEY?: string };
 type Card = { name: string; type?: number };
 type Member = { id: string; name: string; tokenHash: string; spectator: boolean; ready: boolean; cpu?: boolean; cpuPrompts?: CpuPrompts };
 type Player = Member & { spectator: false; score: number; hand: number[]; selection?: number };
 type Answer = { cardId: number; playerId: string | null };
+type CpuChoiceLog = {
+  gameNumber: number; round: number; cpuId: string; cpuName: string; role: 'answer' | 'dealer';
+  theme: string; candidates: string[]; selectedIndex: number; selectedCard: string;
+  instructions: string; source: CpuDecision['source']; reason?: string; selectedAt: string;
+};
 type Game = {
   schema: number; id: string; createdAt: number; updatedAt: number; ownerId: string;
   phase: 'lobby' | 'selecting' | 'reveal' | 'countdown' | 'roundResult' | 'finished'; paused: boolean;
@@ -15,6 +20,8 @@ type Game = {
   deck: number[]; discard: number[]; descriptionDeck: number[]; descriptionDiscard: number[];
   currentDescription?: number; answers: Answer[]; revealed: number; chosenIndex?: number; revealAt?: number;
   result?: { winnerId: string | null; cardId: number; dummy: boolean };
+  gameNumber?: number; cpuLogs?: CpuChoiceLog[]; finishedGames?: number[];
+  completedRounds?: number; finishedReason?: 'roundLimit' | 'early';
 };
 
 const things = (thingsJson as { members: Card[] }).members;
@@ -27,6 +34,7 @@ const RESULT_COUNTDOWN = 3000;
 const CPU_DELAY = 900;
 const CPU_RESULT_DELAY = 3000;
 const MAX_CPU_PROMPT_LENGTH = 2000;
+const ROUND_LIMIT = 10;
 const TYPESAFE_DAILY_LIMIT = 200;
 
 export class JevBudget {
@@ -102,6 +110,12 @@ export default {
       } catch (error) { return json({ error: error instanceof Error ? error.message : '部屋を作成できませんでした' }, 400); }
     }
     const roomMatch = url.pathname.match(/^\/api\/rooms\/([a-f0-9]{12})(?:\/(join))?$/);
+    const logsMatch = url.pathname.match(/^\/api\/rooms\/([a-f0-9]{12})\/cpu-logs$/);
+    if (logsMatch && request.method === 'GET') {
+      return env.ROOMS.get(env.ROOMS.idFromName(logsMatch[1])).fetch('https://room/cpu-logs', {
+        headers: { Authorization: request.headers.get('Authorization') ?? '' },
+      });
+    }
     if (roomMatch && request.method === 'GET' && !roomMatch[2]) {
       return env.ROOMS.get(env.ROOMS.idFromName(roomMatch[1])).fetch('https://room/public');
     }
@@ -176,13 +190,15 @@ export class GameRoom {
       : { index, card: null });
     return {
       id: game.id, phase: game.phase, paused: game.paused, pauseReason: game.pauseReason,
-      round: game.round, currentDescription: game.currentDescription === undefined ? null : descriptions[game.currentDescription].name,
+      round: game.round, roundLimit: ROUND_LIMIT, completedRounds: game.completedRounds ?? 0, finishedReason: game.finishedReason ?? null,
+      currentDescription: game.currentDescription === undefined ? null : descriptions[game.currentDescription].name,
       dealerId: game.dealerId, ownerId: game.ownerId, youId: memberId ?? null,
       youAreOwner: memberId === game.ownerId, spectator: !!me && !game.players.some(p => p.id === memberId),
       players: game.players.map(p => ({ id: p.id, name: p.name, score: p.score, ready: p.ready, online: online.has(p.id), isDealer: p.id === game.dealerId, cpu: !!p.cpu })),
       cpuDefaults: memberId === game.ownerId ? defaultCpuPrompts : undefined,
       cpuPrompts: memberId === game.ownerId ? Object.fromEntries(game.players.filter(p => p.cpu).map(p => [p.id, p.cpuPrompts ?? defaultCpuPrompts])) : undefined,
       cpuProvider: memberId === game.ownerId ? this.env.TYPESAFE_API_KEY ? 'typesafe' : 'cloudflare' : undefined,
+      hasCpuLogs: (game.cpuLogs ?? []).some(entry => (game.finishedGames ?? []).includes(entry.gameNumber)),
       spectators: game.spectators.length, answers, revealed: game.revealed,
       chosenCard: game.phase === 'countdown' && game.chosenIndex !== undefined ? things[game.answers[game.chosenIndex].cardId].name : null,
       chosenIndex: game.phase === 'countdown' ? game.chosenIndex ?? null : null,
@@ -239,7 +255,7 @@ export class GameRoom {
     game.descriptionDeck = newDeck(descriptions.length); game.descriptionDiscard = [];
     game.players.forEach(player => { player.score = 0; player.ready = !!player.cpu; player.hand = []; player.selection = undefined; });
     game.phase = 'lobby'; game.paused = false; game.pauseReason = undefined; game.ownerDisconnectedAt = undefined;
-    game.round = 0; game.dealerId = game.ownerId; game.result = undefined;
+    game.round = 0; game.completedRounds = 0; game.finishedReason = undefined; game.dealerId = game.ownerId; game.result = undefined;
     game.answers = []; game.currentDescription = undefined; game.revealed = 0; game.chosenIndex = undefined; game.revealAt = undefined;
   }
   private transferOwnerIfDue(now = Date.now()): void {
@@ -287,9 +303,20 @@ export class GameRoom {
 
   private advanceRound(): void {
     const game = this.requireGame();
+    if (game.round >= ROUND_LIMIT) { this.finishGame('roundLimit'); return; }
     const current = game.players.findIndex(p => p.id === game.dealerId);
     game.dealerId = game.players[(current + 1) % game.players.length].id;
     game.round++; this.beginRound();
+  }
+
+  private finishGame(reason: 'roundLimit' | 'early'): void {
+    const game = this.requireGame();
+    game.phase = 'finished'; game.finishedReason = reason;
+    game.paused = false; game.pauseReason = undefined;
+    game.cpuNextAt = undefined; game.revealAt = undefined; game.chosenIndex = undefined;
+    const finished = game.finishedGames ??= [];
+    const gameNumber = game.gameNumber ?? 0;
+    if (!finished.includes(gameNumber)) finished.push(gameNumber);
   }
 
   private async cpuStep(): Promise<void> {
@@ -299,11 +326,16 @@ export class GameRoom {
       const player = game.players.find(p => p.cpu && p.id !== game.dealerId && p.selection === undefined)!;
       const round = game.round; const hand = [...player.hand];
       const theme = descriptions[game.currentDescription!].name;
+      const candidates = hand.map(id => things[id].name);
+      const instructions = (player.cpuPrompts ?? defaultCpuPrompts).answer;
       const ai = this.cpuAi();
-      const index = await chooseCpuCard(ai, theme, hand.map(id => things[id].name), 'answer', (player.cpuPrompts ?? defaultCpuPrompts).answer);
+      const decision = await chooseCpuCardDetailed(ai, theme, candidates, 'answer', instructions);
       if (this.game !== game || game.paused || game.phase !== 'selecting' || game.round !== round || !game.players.includes(player) || player.selection !== undefined) return;
-      const cardId = hand[index];
-      if (player.hand.includes(cardId)) this.selectCard(player, cardId);
+      const cardId = hand[decision.index];
+      if (player.hand.includes(cardId)) {
+        this.selectCard(player, cardId);
+        this.recordCpuChoice(player, 'answer', theme, candidates, instructions, decision);
+      }
       return;
     }
     if (game.phase === 'reveal') {
@@ -311,12 +343,25 @@ export class GameRoom {
       const round = game.round; const answers = game.answers;
       const theme = descriptions[game.currentDescription!].name;
       const dealer = game.players.find(p => p.id === game.dealerId)!;
+      const candidates = answers.map(answer => things[answer.cardId].name);
+      const instructions = (dealer.cpuPrompts ?? defaultCpuPrompts).dealer;
       const ai = this.cpuAi();
-      const index = await chooseCpuCard(ai, theme, answers.map(answer => things[answer.cardId].name), 'dealer', (dealer.cpuPrompts ?? defaultCpuPrompts).dealer);
+      const decision = await chooseCpuCardDetailed(ai, theme, candidates, 'dealer', instructions);
       if (this.game !== game || game.paused || game.phase !== 'reveal' || game.round !== round || game.answers !== answers || game.revealed !== answers.length) return;
-      this.chooseAnswer(index); return;
+      this.chooseAnswer(decision.index);
+      this.recordCpuChoice(dealer, 'dealer', theme, candidates, instructions, decision);
+      return;
     }
     if (game.phase === 'roundResult') this.advanceRound();
+  }
+
+  private recordCpuChoice(player: Player, role: 'answer' | 'dealer', theme: string, candidates: string[], instructions: string, decision: CpuDecision): void {
+    const game = this.requireGame();
+    (game.cpuLogs ??= []).push({
+      gameNumber: game.gameNumber ?? 0, round: game.round, cpuId: player.id, cpuName: player.name,
+      role, theme, candidates, selectedIndex: decision.index, selectedCard: candidates[decision.index],
+      instructions, source: decision.source, reason: decision.reason, selectedAt: new Date().toISOString(),
+    });
   }
 
   private cpuAi(): JevBinding | undefined {
@@ -340,7 +385,9 @@ export class GameRoom {
     game.result = { winnerId: answer.playerId, cardId: answer.cardId, dummy: answer.playerId === null };
     if (answer.playerId) { const winner = this.player(answer.playerId); if (winner) winner.score++; }
     else { const dealer = this.player(game.dealerId); if (dealer) dealer.score = Math.max(0, dealer.score - 1); }
-    game.phase = game.players.some(p => p.score >= 5) ? 'finished' : 'roundResult';
+    game.completedRounds = (game.completedRounds ?? 0) + 1;
+    if (game.round >= ROUND_LIMIT) this.finishGame('roundLimit');
+    else game.phase = 'roundResult';
     game.chosenIndex = undefined; game.revealAt = undefined;
   }
 
@@ -358,6 +405,7 @@ export class GameRoom {
           round: 0, dealerId: id, players: [owner], spectators: [],
           deck: newDeck(things.length), discard: [], descriptionDeck: newDeck(descriptions.length), descriptionDiscard: [],
           answers: [], revealed: 0,
+          gameNumber: 0, cpuLogs: [], finishedGames: [], completedRounds: 0,
         };
         await this.save();
         return json({ roomId: body.id, memberId: id, owner: true });
@@ -375,6 +423,16 @@ export class GameRoom {
         return json({ roomId: game.id, memberId: id, owner: false, spectator: !mayPlay, message: mayPlay ? undefined : 'このゲームは進行中のため、観戦で参加します。' });
       }
       if (url.pathname === '/public' && request.method === 'GET') return json(this.view());
+      if (url.pathname === '/cpu-logs' && request.method === 'GET') {
+        const token = request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+        if (!token) return json({ error: '参加情報が必要です' }, 401);
+        const game = this.requireGame();
+        const tokenHash = await hashToken(token);
+        if (![...game.players, ...game.spectators].some(member => member.tokenHash === tokenHash)) return json({ error: '参加情報が無効です' }, 403);
+        const finished = new Set(game.finishedGames ?? []);
+        if (!finished.size) return json({ error: 'ゲーム終了後に閲覧できます' }, 409);
+        return json({ roomId: game.id, entries: (game.cpuLogs ?? []).filter(entry => finished.has(entry.gameNumber)) });
+      }
       if (url.pathname === '/alarm') return json({ ok: true });
       if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') { this.requireGame(); return this.openSocket(); }
       return json({ error: 'Not found' }, 404);
@@ -448,6 +506,8 @@ export class GameRoom {
           this.assertOwner(memberId);
           this.assertNotPaused();
           if (game.phase !== 'lobby' || game.players.length < 2 || !game.players.every(p => p.ready)) throw new Error('全員の準備が完了してから開始してください');
+          game.gameNumber = (game.gameNumber ?? 0) + 1;
+          game.completedRounds = 0; game.finishedReason = undefined;
           game.players.forEach(p => { p.score = 0; p.hand = Array.from({ length: 5 }, () => this.drawThing()); });
           game.round = 1; game.dealerId = game.players[0].id; this.beginRound(); break;
         }
@@ -479,9 +539,12 @@ export class GameRoom {
           if (game.phase !== 'finished') throw new Error('ゲーム終了後に再戦できます');
           this.resetForLobby(); break;
         }
-        case 'reset': {
+        case 'finishEarly': {
           this.assertOwner(memberId);
-          this.resetForLobby(); break;
+          if (game.phase === 'lobby' || game.phase === 'finished') throw new Error('進行中のゲームだけ途中終了できます');
+          if (game.phase === 'countdown') this.finishCountdown();
+          if (!game.finishedReason) this.finishGame('early');
+          break;
         }
         case 'remove': {
           this.assertOwner(memberId);

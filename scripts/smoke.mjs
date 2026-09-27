@@ -88,7 +88,7 @@ try {
   assert.equal(spectator.state.hand.length, 0);
 
   let rounds = 0;
-  while (owner.state.phase !== 'finished' && rounds < 60) {
+  while (owner.state.phase !== 'finished' && rounds < 10) {
     rounds++;
     const dealer = peers.find(peer => peer.state.youId === owner.state.dealerId);
     const answerer = peers.find(peer => peer !== spectator && peer !== dealer);
@@ -121,9 +121,13 @@ try {
       await answerer.wait(s => s?.phase === 'selecting', 'next round for other player');
     }
   }
-  assert.equal(owner.state.phase, 'finished', 'game did not reach five points');
-  assert.ok(owner.state.players.some(player => player.score >= 5));
-  const winner = owner.state.players.find(player => player.score >= 5)?.name;
+  assert.equal(owner.state.phase, 'finished', 'game did not finish after ten rounds');
+  assert.equal(rounds, 10);
+  assert.equal(owner.state.completedRounds, 10);
+  assert.equal(owner.state.finishedReason, 'roundLimit');
+  assert.equal(owner.state.players.reduce((sum, player) => sum + player.score, 0), 10);
+  const highestScore = Math.max(...owner.state.players.map(player => player.score));
+  const winners = owner.state.players.filter(player => player.score === highestScore).map(player => player.name);
   owner.send('rematch');
   await spectator.wait(s => s?.phase === 'lobby' && !s.spectator, 'spectator promoted');
   assert.equal(owner.state.players.length, 3);
@@ -131,8 +135,11 @@ try {
   await owner.wait(s => s?.readyToStart, 'rematch ready');
   owner.send('start');
   await owner.wait(s => s?.phase === 'selecting' && s.players.length === 3, 'three-player game');
-  owner.send('reset');
-  await owner.wait(s => s?.phase === 'lobby' && s.players.every(player => player.score === 0), 'reset');
+  owner.send('finishEarly');
+  await owner.wait(s => s?.phase === 'finished' && s.finishedReason === 'early', 'early finish');
+  assert.equal(owner.state.completedRounds, 0);
+  owner.send('rematch');
+  await owner.wait(s => s?.phase === 'lobby' && s.players.every(player => player.score === 0), 'rematch after early finish');
   owner.send('remove', { memberId: spectatorCredentials.memberId });
   await owner.wait(s => s?.players.length === 2, 'player removal');
   await spectator.wait(() => spectator.closeCode === 4003, 'removed player socket closed');
@@ -151,7 +158,7 @@ try {
     invalidSocket.addEventListener('error', reject, { once: true });
   });
   assert.equal(invalidClose, 4003);
-  console.log(JSON.stringify({ roomId: created.roomId, rounds, reconnect: 'ok', spectatorPromotion: 'ok', reset: 'ok', removal: 'ok', tabTakeover: 'ok', invalidAuth: 'ok', winner }));
+  console.log(JSON.stringify({ roomId: created.roomId, rounds, reconnect: 'ok', spectatorPromotion: 'ok', earlyFinish: 'ok', removal: 'ok', tabTakeover: 'ok', invalidAuth: 'ok', winners }));
 } finally {
   for (const peer of peers) peer.close();
   setTimeout(() => process.exit(), 200);

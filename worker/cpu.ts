@@ -2,6 +2,7 @@ import prompts from '../data/jev_prompts.json' with { type: 'json' };
 
 export type JevBinding = { run(model: string, input: unknown): Promise<unknown> };
 export type CpuPrompts = { answer: string; dealer: string };
+export type CpuDecision = { index: number; source: 'jev' | 'random'; reason?: string };
 export const defaultCpuPrompts: CpuPrompts = { answer: prompts.answer, dealer: prompts.dealer };
 
 export function typeSafeJevBinding(apiKey: string): JevBinding {
@@ -38,15 +39,16 @@ function randomChoice(count: number): number {
   return value[0] % count;
 }
 
-export async function chooseCpuCard(
+export async function chooseCpuCardDetailed(
   ai: JevBinding | undefined,
   theme: string,
   candidates: string[],
   role: 'answer' | 'dealer',
   instructions = defaultCpuPrompts[role],
-): Promise<number> {
+): Promise<CpuDecision> {
   if (!candidates.length) throw new Error('CPUに選べるカードがありません');
-  if (candidates.length === 1) return 0;
+  if (candidates.length === 1) return { index: 0, source: 'random', reason: '候補が1枚' };
+  let reason = 'Jevの回答が候補外';
   try {
     if (!ai) throw new Error('Jev binding unavailable');
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -59,12 +61,23 @@ export async function chooseCpuCard(
     const index = typeof choice === 'string' && /^choice_\d+$/.test(choice) ? Number(choice.slice(7)) : -1;
     if (index >= 0 && index < candidates.length) {
       console.info('CPU Jev choice accepted', { role, choice });
-      return index;
+      return { index, source: 'jev' };
     }
     console.warn('CPU Jev returned an invalid choice', { role, choice });
   } catch (error) {
-    console.warn('CPU Jev unavailable; using random choice', { role, reason: error instanceof Error ? error.message : String(error) });
+    reason = error instanceof Error ? error.message : String(error);
+    console.warn('CPU Jev unavailable; using random choice', { role, reason });
     // The table keeps moving during local play or a temporary AI outage.
   }
-  return randomChoice(candidates.length);
+  return { index: randomChoice(candidates.length), source: 'random', reason };
+}
+
+export async function chooseCpuCard(
+  ai: JevBinding | undefined,
+  theme: string,
+  candidates: string[],
+  role: 'answer' | 'dealer',
+  instructions = defaultCpuPrompts[role],
+): Promise<number> {
+  return (await chooseCpuCardDetailed(ai, theme, candidates, role, instructions)).index;
 }

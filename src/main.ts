@@ -4,15 +4,23 @@ import './style.css';
 
 type Player = { id: string; name: string; score: number; ready: boolean; online: boolean; isDealer: boolean; cpu: boolean };
 type CpuPrompts = { answer: string; dealer: string };
+type CpuLogEntry = {
+  gameNumber: number; round: number; cpuId: string; cpuName: string; role: 'answer' | 'dealer';
+  theme: string; candidates: string[]; selectedIndex: number; selectedCard: string;
+  instructions: string; source: 'jev' | 'random'; reason?: string; selectedAt: string;
+};
+type CpuLogsResponse = { roomId: string; entries: CpuLogEntry[] };
 type Snapshot = {
   id: string; phase: 'lobby' | 'selecting' | 'reveal' | 'countdown' | 'roundResult' | 'finished'; paused: boolean; pauseReason?: string;
-  round: number; currentDescription: string | null; dealerId: string; ownerId: string; youId: string | null;
+  round: number; roundLimit: number; completedRounds: number; finishedReason: 'roundLimit' | 'early' | null;
+  currentDescription: string | null; dealerId: string; ownerId: string; youId: string | null;
   youAreOwner: boolean; spectator: boolean; players: Player[]; spectators: number;
   answers: { index: number; card: string | null }[]; revealed: number;
   chosenCard: string | null; chosenIndex: number | null; countdownEndsAt: number | null; serverNow: number;
   result: { winnerId: string | null; winnerName: string | null; card: string; dummy: boolean } | null;
   hand: { id: number; name: string }[]; yourSelection: number | null; readyToStart: boolean;
   cpuDefaults?: CpuPrompts; cpuPrompts?: Record<string, CpuPrompts>; cpuProvider?: 'typesafe' | 'cloudflare';
+  hasCpuLogs: boolean;
 };
 type RoomCredential = { roomId: string; memberId: string; token: string; owner: boolean; spectator?: boolean; message?: string };
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -31,6 +39,11 @@ let countdownTimer: number | undefined;
 let scoreEffect: { playerId: string; name: string; delta: number } | null = null;
 let scoreEffectTimer: number | undefined;
 let cpuEditor: { memberId: string | null; prompts: CpuPrompts } | null = null;
+let cpuLogsOpen = false;
+let cpuLogs: CpuLogsResponse | null = null;
+let cpuLogsLoading = false;
+let cpuLogsError = '';
+let selectedCpuId: string | null = null;
 
 function esc(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
@@ -94,6 +107,7 @@ function enter(next: RoomCredential): void {
   notice = ''; qrOpen = false; qrDataUrl = '';
   selectionDraft = null; selectionSending = false; countdownTarget = null; scoreEffect = null;
   cpuEditor = null;
+  cpuLogsOpen = false; cpuLogs = null; cpuLogsLoading = false; cpuLogsError = ''; selectedCpuId = null;
   credential = next; localStorage.setItem(storedKey(next.roomId), JSON.stringify(next));
   history.pushState({}, '', `/r/${next.roomId}`); snapshot = null; connect();
 }
@@ -132,6 +146,7 @@ function connect(): void {
         scoreEffect = null;
         if (scoreEffectTimer) { window.clearTimeout(scoreEffectTimer); scoreEffectTimer = undefined; }
       }
+      if (next.phase === 'finished' && previous?.phase !== 'finished') { cpuLogs = null; selectedCpuId = null; }
       snapshot = next; renderRoom();
     }
     else if (message.type === 'notice') { notice = message.payload?.message ?? ''; renderRoom(); }
@@ -169,6 +184,51 @@ function playerList(game: Snapshot): string {
     </li>`).join('');
 }
 
+function cpuLogPanel(game: Snapshot): string {
+  if (!game.hasCpuLogs) return '';
+  if (!cpuLogsOpen) return '<div class="cpu-log-toggle"><button class="button secondary" id="open-cpu-logs">終了したゲームのCPU選択ログを見る</button></div>';
+  let body = '';
+  if (cpuLogsLoading) body = '<p class="muted">ログを読み込んでいます…</p>';
+  else if (cpuLogsError) body = `<p class="error" role="alert">${esc(cpuLogsError)}</p>`;
+  else if (!cpuLogs?.entries.length) body = '<p class="muted">終了したゲームのCPU選択は記録されていません。</p>';
+  else {
+    const cpus = [...new Map(cpuLogs.entries.map(entry => [entry.cpuId, entry.cpuName])).entries()];
+    const cpuId = selectedCpuId && cpus.some(([id]) => id === selectedCpuId) ? selectedCpuId : cpus[0][0];
+    const entries = cpuLogs.entries.filter(entry => entry.cpuId === cpuId);
+    body = `<div class="cpu-log-tabs">${cpus.map(([id, name]) => `<button type="button" class="button ${id === cpuId ? 'primary' : 'secondary'}" data-cpu-log="${esc(id)}" aria-pressed="${id === cpuId}">${esc(name)}</button>`).join('')}</div>
+      <div class="cpu-log-actions"><span>${entries.length}件の選択</span><button class="button secondary" id="download-cpu-log" data-cpu-id="${esc(cpuId)}">このCPUのログをJSONで保存</button></div>
+      <ol class="cpu-log-list">${entries.map(entry => `<li class="cpu-log-entry"><div class="cpu-log-meta"><b>ゲーム ${entry.gameNumber}・ROUND ${entry.round}・${entry.role === 'answer' ? '回答側' : '親'}</b><time>${esc(new Date(entry.selectedAt).toLocaleString('ja-JP'))}</time></div><p><strong>お題</strong> ${esc(entry.theme)}</p><p><strong>選択</strong> ${esc(entry.selectedCard)} <span class="cpu-log-source">${entry.source === 'jev' ? 'Jev' : 'ランダム代替'}</span></p><details><summary>候補と指示文を見る</summary><ol class="cpu-log-candidates">${entry.candidates.map((card, index) => `<li ${index === entry.selectedIndex ? 'class="selected"' : ''}>${esc(card)}${index === entry.selectedIndex ? ' ✓' : ''}</li>`).join('')}</ol><p><strong>指示文</strong> ${esc(entry.instructions)}</p>${entry.reason ? `<p><strong>代替理由</strong> ${esc(entry.reason)}</p>` : ''}</details></li>`).join('')}</ol>`;
+  }
+  return `<section class="stage cpu-log-panel"><div class="cpu-log-heading"><div><p class="eyebrow">CPU LOG</p><h2>CPUの選択履歴</h2></div><button class="button secondary" id="close-cpu-logs">閉じる</button></div><p class="muted">終了したゲームの記録だけを表示します。部屋の有効期限内にJSONを保存してください。</p>${body}</section>`;
+}
+
+async function loadCpuLogs(): Promise<void> {
+  if (!credential || cpuLogsLoading) return;
+  const roomId = credential.roomId;
+  cpuLogsLoading = true; cpuLogsError = ''; renderRoom();
+  try {
+    const response = await fetch(`/api/rooms/${roomId}/cpu-logs`, { headers: { Authorization: `Bearer ${credential.token}` }, cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? 'ログを読み込めませんでした');
+    if (credential?.roomId === roomId) cpuLogs = data as CpuLogsResponse;
+  } catch (error) {
+    if (credential?.roomId === roomId) cpuLogsError = error instanceof Error ? error.message : 'ログを読み込めませんでした';
+  } finally {
+    if (credential?.roomId === roomId) { cpuLogsLoading = false; renderRoom(); }
+  }
+}
+
+function downloadCpuLog(cpuId: string, roomId: string): void {
+  const entries = cpuLogs?.entries.filter(entry => entry.cpuId === cpuId) ?? [];
+  if (!entries.length) return;
+  const file = new Blob([JSON.stringify({ roomId, cpuId, cpuName: entries[0].cpuName, entries }, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(file);
+  const link = document.createElement('a');
+  link.href = url; link.download = `ata-cpu-${roomId}-${cpuId.slice(0, 8)}.json`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function renderRoom(): void {
   if (countdownTimer) { window.clearInterval(countdownTimer); countdownTimer = undefined; }
   if (!credential) { landing(); return; }
@@ -180,7 +240,7 @@ function renderRoom(): void {
   const activePlayer = game.players.some(p => p.id === game.youId);
   let stage = '';
   if (game.phase === 'lobby') {
-    stage = `<section class="stage lobby-stage"><p class="eyebrow">GAME ROOM</p><h2>みんなが集まるのを待っています</h2><p class="muted">${game.players.length}/8 人 · 2人以上で遊べます</p>
+    stage = `<section class="stage lobby-stage"><p class="eyebrow">GAME ROOM</p><h2>みんなが集まるのを待っています</h2><p class="muted">${game.players.length}/8 人 · 2人以上 · 全${game.roundLimit}ラウンドで遊べます</p>
       <div class="invite-row"><code>${esc(inviteUrl)}</code><button class="button compact" id="copy-invite">リンクをコピー</button><button class="button compact" id="show-qr">QRコード</button></div>
       <div id="qr-panel" class="qr-panel" ${qrOpen ? '' : 'hidden'}><img id="qr-image" src="${qrDataUrl}" alt="部屋への招待QRコード"><p>スマートフォンで読み取って参加</p></div>
       <div class="stage-actions">${activePlayer ? `<button class="button ${game.players.find(p => p.id === game.youId)?.ready ? 'secondary' : 'primary'}" id="ready">${game.players.find(p => p.id === game.youId)?.ready ? '準備OK ✓' : '準備完了'}</button>` : '<span class="pill">観戦で参加中 · 次のゲームから参加できます</span>'}
@@ -208,19 +268,30 @@ function renderRoom(): void {
       ${canChoose ? `<button class="button primary wide confirm-button" id="confirm-answer" ${draftIndex === null || selectionSending ? 'disabled' : ''}>${selectionSending ? '送信中…' : 'この回答を確定する'}</button>` : ''}</section>`;
   } else if (game.phase === 'countdown') {
     stage = `<section class="stage countdown-stage"><p class="eyebrow">ROUND ${game.round}</p><h2>選ばれた回答は…</h2><article class="prompt-card small"><span class="prompt-label">お題</span><p>${esc(game.currentDescription)}</p></article><div class="revealed-grid">${game.answers.map(answer => `<div class="answer-card reveal-card is-revealed ${answer.index === game.chosenIndex ? 'is-chosen' : ''}">${esc(answer.card)}${answer.index === game.chosenIndex ? '<span>選ばれた回答</span>' : ''}</div>`).join('')}</div><div class="countdown-number" id="countdown-number" aria-hidden="true">3</div><p class="muted center" id="countdown-message" role="status">誰が出したかは、カウントダウン後に公開します</p></section>`;
-  } else if (game.phase === 'roundResult' || game.phase === 'finished') {
+  } else if (game.phase === 'roundResult') {
     const result = game.result;
-    stage = `<section class="stage result-stage"><p class="eyebrow">${game.phase === 'finished' ? 'GAME FINISHED' : `ROUND ${game.round} RESULT`}</p><h2>${game.phase === 'finished' ? 'ゲーム終了！' : '選ばれた回答'}</h2>
+    stage = `<section class="stage result-stage"><p class="eyebrow">ROUND ${game.round} / ${game.roundLimit} RESULT</p><h2>選ばれた回答</h2>
       <article class="winning-card"><span class="prompt-label">${result?.dummy ? 'ダミー回答' : `回答者 · ${esc(result?.winnerName)}`}</span><p>${esc(result?.card)}</p></article>
       ${scoreEffect ? `<div class="score-celebration ${scoreEffect.delta > 0 ? 'positive' : 'negative'}" role="status"><strong>${scoreEffect.delta > 0 ? '+1' : '−1'}</strong><span>${esc(scoreEffect.name)} さん</span></div>` : ''}
       <div class="result-message">${result?.dummy ? '親は1点減点（0点が下限）' : `🎉 ${esc(result?.winnerName)} さんに1点！`}</div>
-      ${game.phase === 'finished' ? `<div class="winner-banner">${esc([...game.players].sort((a,b) => b.score - a.score)[0]?.name)} さんが5点に到達しました</div>${game.youAreOwner ? '<button class="button primary wide" id="rematch">同じメンバーで再戦</button>' : '<p class="muted center">部屋の作成者が再戦を始めます。</p>'}` : game.youId === game.dealerId ? '<button class="button primary wide" id="advance">次のラウンドへ →</button>' : '<p class="muted center">親が次のラウンドを始めます。</p>'}</section>`;
+      ${game.youId === game.dealerId ? '<button class="button primary wide" id="advance">次のラウンドへ →</button>' : '<p class="muted center">親が次のラウンドを始めます。</p>'}</section>`;
+  } else if (game.phase === 'finished') {
+    const ranking = [...game.players].sort((a, b) => b.score - a.score);
+    const leaders = ranking.filter(player => player.score === ranking[0]?.score);
+    const winner = leaders.length === 1 ? `${leaders[0].name} さんが1位` : `${leaders.map(player => player.name).join('・')} さんが同点1位`;
+    const result = game.result;
+    stage = `<section class="stage result-stage"><p class="eyebrow">GAME FINISHED</p><h2>${game.finishedReason === 'early' ? '途中終了の結果' : `${game.roundLimit}ラウンドの結果`}</h2><p class="muted center">得点に反映したラウンド: ${game.completedRounds} / ${game.roundLimit}</p>
+      <div class="winner-banner">${esc(winner)}</div>
+      <ol class="final-ranking">${ranking.map(player => `<li><span>${ranking.findIndex(other => other.score === player.score) + 1}位　${esc(player.name)}</span><strong>${player.score}点</strong></li>`).join('')}</ol>
+      ${result ? `<div class="last-result"><span class="prompt-label">最後に選ばれた回答</span><p>${esc(result.card)} <small>（${result.dummy ? 'ダミー回答' : esc(result.winnerName)}）</small></p></div>` : '<p class="muted center">進行中だったラウンドの得点は集計していません。</p>'}
+      ${scoreEffect ? `<div class="score-celebration ${scoreEffect.delta > 0 ? 'positive' : 'negative'}" role="status"><strong>${scoreEffect.delta > 0 ? '+1' : '−1'}</strong><span>${esc(scoreEffect.name)} さん</span></div>` : ''}
+      ${game.youAreOwner ? '<button class="button primary wide" id="rematch">同じメンバーで再戦</button>' : '<p class="muted center">部屋の作成者が再戦を始めます。</p>'}</section>`;
   }
   const ownerOffline = !game.players.find(p => p.id === game.ownerId)?.online;
   app.innerHTML = `<main class="game-shell">
     <header class="topbar"><a class="wordmark" href="/">視 <span>私の世界の見方</span></a><div class="topbar-right"><span class="room-chip">部屋 ${esc(game.id.toUpperCase())}</span><button class="button text-button" id="copy-top">招待を共有 ↗</button></div></header>
-    <div class="game-layout"><aside class="sidebar"><div class="sidebar-title"><span class="eyebrow">PLAYERS</span><span class="pill">${game.players.length} / 8</span></div><ul class="player-list">${playerList(game)}</ul><div class="sidebar-bottom"><span class="presence-dot"></span>${game.spectators}人が観戦中</div>${game.youAreOwner && game.phase !== 'lobby' ? '<button class="button reset-button" id="reset">ゲームをリセット</button>' : ''}</aside>
-      <div class="game-main">${game.paused ? `<div class="pause-banner"><b>ゲームを一時停止中</b><span>${esc(game.pauseReason ?? '参加者の復帰を待っています')}</span>${game.youAreOwner && ownerOffline ? '<small>管理者の引き継ぎを待っています</small>' : ''}</div>` : ''}${notice ? `<div class="notice" role="status">${esc(notice)}<button id="dismiss-notice" aria-label="閉じる">×</button></div>` : ''}${stage}</div></div>
+    <div class="game-layout"><aside class="sidebar"><div class="sidebar-title"><span class="eyebrow">PLAYERS</span><span class="pill">${game.players.length} / 8</span></div><ul class="player-list">${playerList(game)}</ul><div class="sidebar-bottom"><span class="presence-dot"></span>${game.spectators}人が観戦中</div>${game.youAreOwner && game.phase !== 'lobby' && game.phase !== 'finished' ? '<button class="button reset-button" id="finish-early">途中終了して結果を見る</button>' : ''}</aside>
+      <div class="game-main">${game.paused ? `<div class="pause-banner"><b>ゲームを一時停止中</b><span>${esc(game.pauseReason ?? '参加者の復帰を待っています')}</span>${game.youAreOwner && ownerOffline ? '<small>管理者の引き継ぎを待っています</small>' : ''}</div>` : ''}${notice ? `<div class="notice" role="status">${esc(notice)}<button id="dismiss-notice" aria-label="閉じる">×</button></div>` : ''}${stage}${cpuLogPanel(game)}</div></div>
     <footer class="game-footer">友達との会話は、いつもの通話アプリでどうぞ。 <span>WATASHI NO SEKAI NO MIKATA</span></footer>
   </main>`;
   bindRoomEvents(game, inviteUrl);
@@ -237,6 +308,13 @@ function renderRoom(): void {
 }
 
 function bindRoomEvents(game: Snapshot, inviteUrl: string): void {
+  document.querySelector('#open-cpu-logs')?.addEventListener('click', () => { cpuLogsOpen = true; if (cpuLogs) renderRoom(); else void loadCpuLogs(); });
+  document.querySelector('#close-cpu-logs')?.addEventListener('click', () => { cpuLogsOpen = false; renderRoom(); });
+  document.querySelectorAll<HTMLElement>('[data-cpu-log]').forEach(button => button.addEventListener('click', () => { selectedCpuId = button.dataset.cpuLog ?? null; renderRoom(); }));
+  document.querySelector<HTMLElement>('#download-cpu-log')?.addEventListener('click', event => {
+    const cpuId = (event.currentTarget as HTMLElement).dataset.cpuId;
+    if (cpuId) downloadCpuLog(cpuId, game.id);
+  });
   document.querySelector('#dismiss-notice')?.addEventListener('click', () => { notice = ''; renderRoom(); });
   document.querySelector('#copy-invite')?.addEventListener('click', () => copyInvite(inviteUrl));
   document.querySelector('#copy-top')?.addEventListener('click', () => copyInvite(inviteUrl));
@@ -278,8 +356,9 @@ function bindRoomEvents(game: Snapshot, inviteUrl: string): void {
   document.querySelector('#reveal')?.addEventListener('click', () => send('reveal'));
   document.querySelector('#advance')?.addEventListener('click', () => send('advance'));
   document.querySelector('#rematch')?.addEventListener('click', () => send('rematch'));
-  document.querySelector('#reset')?.addEventListener('click', () => {
-    if (confirm('得点・手札を初期化して、この部屋で最初から始めますか？')) send('reset');
+  document.querySelector('#finish-early')?.addEventListener('click', () => {
+    const scoring = game.phase === 'countdown' ? '選ばれた回答の得点を反映して' : game.phase === 'roundResult' ? '現在の得点で' : '進行中のラウンドは得点に含めず、現在の得点で';
+    if (confirm(`${scoring}ゲームを終了しますか？ CPUの選択ログも閲覧できるようになります。`)) send('finishEarly');
   });
   document.querySelectorAll<HTMLElement>('[data-select]').forEach(button => button.addEventListener('click', () => {
     selectionDraft = { kind: 'hand', id: Number(button.dataset.select), roomId: game.id, round: game.round }; renderRoom();

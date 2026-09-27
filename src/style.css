@@ -91,6 +91,12 @@ h1 { font-family: 'Noto Sans JP', sans-serif; font-size: clamp(34px, 5vw, 53px);
 .cpu-settings-button { min-height: 32px; padding: 5px 7px; font-size: 11px; white-space: nowrap; color: var(--blue); background: var(--blue-light); }
 .presence-dot { display: inline-block; width: 7px; height: 7px; background: #6b9b70; border-radius: 100%; margin-right: 6px; }
 .reset-button { margin-top: 15px; width: 100%; min-height: 37px; color: #887f70; background: #f3f0e9; font-size: 11px; }
+.final-ranking { margin: 20px 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.final-ranking li { display: flex; justify-content: space-between; gap: 12px; padding: 11px 3px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.final-ranking strong { color: var(--red-dark); white-space: nowrap; }
+.last-result { margin: 20px 0; padding: 16px; text-align: center; background: #fbfaf6; border: 1px solid var(--line); }
+.last-result p { margin: 7px 0 0; font-size: 17px; font-weight: 700; }
+.last-result small { font-size: 11px; font-weight: 400; color: var(--muted); }
 .game-main { min-width: 0; max-width: 800px; width: 100%; margin: 0 auto; }
 .stage { background: var(--white); border: 1px solid var(--line); padding: clamp(20px, 4vw, 37px); box-shadow: var(--shadow); }
 .stage-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
@@ -116,6 +122,24 @@ h1 { font-family: 'Noto Sans JP', sans-serif; font-size: clamp(34px, 5vw, 53px);
 .cpu-editor textarea:focus { outline: 2px solid var(--blue); outline-offset: 1px; }
 .cpu-editor-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 15px; }
 .cpu-editor-actions .button { min-width: 0; }
+.cpu-log-toggle { margin-top: 18px; text-align: center; }
+.cpu-log-panel { margin-top: 18px; }
+.cpu-log-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.cpu-log-panel > .muted { margin: 10px 0 18px; font-size: 12px; }
+.cpu-log-tabs, .cpu-log-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cpu-log-tabs .button, .cpu-log-actions .button { min-height: 36px; padding: 7px 11px; font-size: 12px; }
+.cpu-log-actions { justify-content: space-between; margin: 16px 0; color: var(--muted); font-size: 12px; }
+.cpu-log-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+.cpu-log-entry { padding: 15px; border: 1px solid var(--line); background: #fbfaf6; overflow-wrap: anywhere; }
+.cpu-log-meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; }
+.cpu-log-meta time { color: var(--muted); }
+.cpu-log-entry p { margin: 10px 0; font-size: 13px; line-height: 1.7; }
+.cpu-log-entry strong { margin-right: 6px; }
+.cpu-log-source { display: inline-block; margin-left: 7px; padding: 2px 6px; border-radius: 3px; color: var(--blue); background: var(--blue-light); font-size: 11px; }
+.cpu-log-entry details { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; }
+.cpu-log-entry summary { cursor: pointer; color: var(--blue); font-weight: 700; }
+.cpu-log-candidates { margin: 10px 0; padding-left: 25px; line-height: 1.8; }
+.cpu-log-candidates .selected { color: var(--red-dark); font-weight: 700; }
 .prompt-card { position: relative; display: grid; place-content: center; text-align: center; min-height: 157px; margin: 21px 0 24px; padding: 25px; border: 1px solid #d6d2c8; background: #fbfaf6; box-shadow: inset 0 0 0 5px #fbfaf6, inset 0 0 0 6px #ece8dd; }
 .prompt-label { display: block; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #8b651f; font-weight: 700; }
 .prompt-card p { margin: 8px auto 0; max-width: 630px; font-family: 'Noto Sans JP', sans-serif; font-size: clamp(17px, 2.4vw, 23px); font-weight: 600; line-height: 1.75; }

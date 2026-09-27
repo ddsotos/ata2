@@ -20,7 +20,7 @@ npm run build
 npm exec --yes --package=node@22 -- wrangler dev
 ```
 
-別のターミナルで `npm exec --yes --package=node@22 -- node scripts/smoke.mjs` を実行すると、部屋作成から5点到達、切断復帰、観戦者の参加、リセット、除外まで確認できます。
+別のターミナルで `npm exec --yes --package=node@22 -- node scripts/smoke.mjs` を実行すると、部屋作成から10ラウンド終了、切断復帰、観戦者の参加、途中終了、除外まで確認できます。
 
 ## Cloudflare へ公開
 
@@ -43,7 +43,7 @@ npm exec --yes --package=node@22 -- wrangler dev
 - 親以外は5枚の手札から1枚を選び、確定ボタンで提出します。親も手札を見られますが、そのラウンドでは選択できません。
 - 親は回答を1枚ずつ公開し、一番好きな回答を選んで確定します。公開済みの回答を表示したまま選ばれた1枚を強調し、3秒のカウントダウン後に回答者と得点を公開します。
 - プレイヤーの回答が選ばれるとその人が1点、ダミーが選ばれると親が1点減点（0点が下限）です。
-- 5点に達した人が出たラウンドの結果後にゲーム終了です。同じ部屋で再戦できます。
+- 10ラウンドの結果後に得点で順位を決めます。同点の場合は同点1位です。部屋の管理者は途中終了を選んでその時点の結果を表示できます。選択済みでカウントダウン中の回答は得点に反映し、それ以前の進行中ラウンドは反映しません。同じ部屋で再戦できます。
 - プレイヤーが切断するとゲームを止めます。本人の復帰で自動再開し、戻らない場合は作成者が除外できます。
 - 作成者が2分間戻らない場合、接続中で入室が最も早いプレイヤーへ管理を引き継ぎます。
 
@@ -62,13 +62,15 @@ Worker から TypeSafe API の Jev、または Cloudflare AI の [`typesafe/jev`
 
 部屋の管理者は待機画面でCPUを追加するとき、回答側と親側の指示文をCPUごとに設定できます。追加済みのCPUはプレイヤー一覧の「指示文」から変更できます。初期値は `data/jev_prompts.json` です。変更はゲーム開始前に行い、その部屋に保存されます。管理者が交代した場合は新しい管理者が設定を編集できます。
 
+CPUの選択は、ゲーム番号・ラウンド・役割・お題・候補・選択カード・使用した指示文・Jev/代替選択の別・時刻を部屋の Durable Object に記録します。終了したゲームの記録は部屋の参加者がCPU別に閲覧し、JSONファイルとして保存できます。進行中のゲームの記録は表示しません。再戦後も終了済みゲームの記録は残りますが、部屋は24時間操作がないと削除されるため、必要なログは事前に保存してください。
+
 オンライン版は、Worker Secret `TYPESAFE_API_KEY` が設定されていれば Worker から TypeSafe API の `jev-latest` を直接呼びます。未設定なら Cloudflare AI binding を使います。どちらも失敗した場合は、ゲームを続けるためランダム選択に切り替わります。キーをブラウザーや部屋の保存データへ渡す必要はありません。`wrangler.toml` の通常の変数やフロントエンドのコードには置かないでください。
 
-現在の Cloudflare AI binding では `Insufficient AI Gateway credits` が確認されています。オンラインで Jev を使うには、Cloudflare ダッシュボードで Workers & Pages → `watashi-no-sekai-online` → Settings → Variables and Secrets → Add を開き、Type を **Secret**、名前を `TYPESAFE_API_KEY`、値を取得済みの TypeSafe APIキーにして Deploy してください。画面の「Jev接続」が「TypeSafe API（Worker Secret）」になれば、切り替えは完了です。CLI からは `npx wrangler secret put TYPESAFE_API_KEY` でも登録できます。API利用料はキーの契約に従って発生します。公開サイト全体で TypeSafe への送信を UTC の1日あたり200回に制限します。この制限は正確な金額上限ではなく、他のアプリからの利用も含みません。
+この公開環境では `TYPESAFE_API_KEY` を Worker Secret に登録し、回答側・親側とも実際の Jev 応答を確認しました。別の環境で設定する場合は、Cloudflare ダッシュボードで Workers & Pages → `watashi-no-sekai-online` → Settings → Variables and Secrets → Add を開き、Type を **Secret**、名前を `TYPESAFE_API_KEY`、値を取得済みの TypeSafe APIキーにして Deploy してください。画面の「Jev接続」が「TypeSafe API（Worker Secret）」になれば、切り替えは完了です。CLI からは `npx wrangler secret put TYPESAFE_API_KEY` でも登録できます。API利用料はキーの契約に従って発生します。公開サイト全体で TypeSafe への送信を UTC の1日あたり200回に制限します。この制限は正確な金額上限ではなく、他のアプリからの利用も含みません。
 
 ローカルの Wrangler では AI binding が使えない環境があるため、その場合とモデルの応答がない場合は候補からランダムに選び、ゲームを続けます。Jev の実応答は、TypeSafe Secret を設定した公開環境か、下記の直接実験画面で確認できます。料金は利用する経路の契約条件を確認してください。
 
-CPUの動作確認は `npm run smoke:cpu`、Jev のリクエスト形式と代替動作の確認は `npm run test:cpu-choice` で実行できます。
+CPUの動作確認は `npm run smoke:cpu`、終了後の選択ログと再戦後の保持は `npm run smoke:cpu-logs`、Jev のリクエスト形式と代替動作は `npm run test:cpu-choice` で確認できます。
 
 ### Cloudflare を通さず Jev の入力を試す
 

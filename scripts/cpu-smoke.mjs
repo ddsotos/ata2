@@ -39,6 +39,10 @@ try {
   send('start');
   await wait(s => s?.phase === 'selecting' && s.hand.length === 5, 'first round');
   await wait(s => s?.phase === 'reveal', 'CPU submitted card');
+  const earlyLog = await fetch(`${base}/api/rooms/${room.roomId}/cpu-logs`, { headers: { Authorization: `Bearer ${room.token}` } });
+  assert.equal(earlyLog.status, 409, 'CPU choices should stay hidden until the game ends');
+  const unauthenticatedLog = await fetch(`${base}/api/rooms/${room.roomId}/cpu-logs`);
+  assert.equal(unauthenticatedLog.status, 401);
   for (let i = 1; i <= 2; i++) {
     send('reveal'); await wait(s => s?.revealed === i, `reveal ${i}`);
   }
@@ -52,14 +56,18 @@ try {
   await wait(s => s?.phase === 'countdown', 'CPU revealed and chose', 20000);
   assert.equal(state.revealed, state.answers.length);
   await wait(s => s?.phase === 'roundResult', 'second result');
-  send('reset');
-  await wait(s => s?.phase === 'lobby', 'reset to lobby');
-  assert.equal(state.players[1].ready, true, 'CPU should remain ready after reset');
+  send('finishEarly');
+  await wait(s => s?.phase === 'finished', 'early finish');
+  assert.equal(state.finishedReason, 'early');
+  assert.equal(state.completedRounds, 2);
+  send('rematch');
+  await wait(s => s?.phase === 'lobby', 'rematch lobby');
+  assert.equal(state.players[1].ready, true, 'CPU should remain ready after rematch');
   send('ready');
   await wait(s => s?.readyToStart, 'ready after reset');
   send('remove', { memberId: state.players[1].id });
   await wait(s => s?.players.length === 1, 'remove CPU');
   assert.equal(state.readyToStart, false);
   assert.equal(errors.length, 0, JSON.stringify(errors));
-  console.log(JSON.stringify({ roomId: room.roomId, answered: true, dealerChose: true, reset: true, removal: true }));
+  console.log(JSON.stringify({ roomId: room.roomId, answered: true, dealerChose: true, earlyFinish: true, removal: true }));
 } finally { socket.close(); }
