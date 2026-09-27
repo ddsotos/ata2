@@ -1,4 +1,5 @@
 import QRCode from 'qrcode';
+import { parseRoomId } from './room-code';
 import './style.css';
 
 type Player = { id: string; name: string; score: number; ready: boolean; online: boolean; isDealer: boolean; cpu: boolean };
@@ -61,7 +62,7 @@ function landing(error = ''): void {
         </form>
         <form id="join-form" class="panel">
           <span class="step">02</span><h2>招待から参加</h2>
-          <label>部屋コード<input name="room" inputmode="text" maxlength="12" required placeholder="招待リンクのコード"></label>
+          <label>部屋コードまたは招待リンク<input name="room" inputmode="text" required placeholder="12桁のコード、または招待リンク" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
           <label>あなたの名前<input name="name" maxlength="16" required placeholder="例：はる" autocomplete="nickname"></label>
           <button class="button secondary" type="submit">部屋に入る <span>→</span></button>
         </form>
@@ -76,11 +77,12 @@ function landing(error = ''): void {
   });
   document.querySelector<HTMLFormElement>('#join-form')!.addEventListener('submit', async event => {
     event.preventDefault(); const form = new FormData(event.currentTarget as HTMLFormElement);
-    const id = String(form.get('room')).trim().toLowerCase();
+    const id = parseRoomId(String(form.get('room') ?? ''));
     try {
+      if (!id) throw new Error('12桁の部屋コード、または招待リンクを入力してください');
       const result = await api(`/api/rooms/${encodeURIComponent(id)}/join`, { name: form.get('name') });
       enter(result as RoomCredential);
-    } catch (e) { landing((e as Error).message); }
+    } catch (e) { app.querySelector('.error')!.textContent = (e as Error).message; }
   });
 }
 
@@ -209,7 +211,7 @@ function renderRoom(): void {
   }
   const ownerOffline = !game.players.find(p => p.id === game.ownerId)?.online;
   app.innerHTML = `<main class="game-shell">
-    <header class="topbar"><a class="wordmark" href="/">視 <span>私の世界の見方</span></a><div class="topbar-right"><span class="room-chip">部屋 ${esc(game.id.slice(0, 6).toUpperCase())}</span><button class="button text-button" id="copy-top">招待を共有 ↗</button></div></header>
+    <header class="topbar"><a class="wordmark" href="/">視 <span>私の世界の見方</span></a><div class="topbar-right"><span class="room-chip">部屋 ${esc(game.id.toUpperCase())}</span><button class="button text-button" id="copy-top">招待を共有 ↗</button></div></header>
     <div class="game-layout"><aside class="sidebar"><div class="sidebar-title"><span class="eyebrow">PLAYERS</span><span class="pill">${game.players.length} / 8</span></div><ul class="player-list">${playerList(game)}</ul><div class="sidebar-bottom"><span class="presence-dot"></span>${game.spectators}人が観戦中</div>${game.youAreOwner && game.phase !== 'lobby' ? '<button class="button reset-button" id="reset">ゲームをリセット</button>' : ''}</aside>
       <div class="game-main">${game.paused ? `<div class="pause-banner"><b>ゲームを一時停止中</b><span>${esc(game.pauseReason ?? '参加者の復帰を待っています')}</span>${game.youAreOwner && ownerOffline ? '<small>管理者の引き継ぎを待っています</small>' : ''}</div>` : ''}${notice ? `<div class="notice" role="status">${esc(notice)}<button id="dismiss-notice" aria-label="閉じる">×</button></div>` : ''}${stage}</div></div>
     <footer class="game-footer">友達との会話は、いつもの通話アプリでどうぞ。 <span>WATASHI NO SEKAI NO MIKATA</span></footer>
@@ -280,7 +282,7 @@ async function boot(): Promise<void> {
     try { credential = JSON.parse(saved) as RoomCredential; connect(); return; }
     catch { localStorage.removeItem(storedKey(roomId)); }
   }
-  app.innerHTML = `<main class="landing join-landing"><a class="back-link" href="/">← ホームへ</a><div class="brand-mark small-mark">視</div><p class="eyebrow">INVITATION</p><h1>部屋に参加する</h1><p class="lead">部屋コード <strong>${esc(roomId.slice(0, 6).toUpperCase())}</strong></p><form id="room-join" class="panel"><label>あなたの名前<input name="name" maxlength="16" required placeholder="例：あおい" autocomplete="nickname"></label><button class="button primary" type="submit">参加する <span>→</span></button></form><p class="error" role="alert">${esc(notice)}</p></main>`;
+  app.innerHTML = `<main class="landing join-landing"><a class="back-link" href="/">← ホームへ</a><div class="brand-mark small-mark">視</div><p class="eyebrow">INVITATION</p><h1>部屋に参加する</h1><p class="lead">部屋コード <strong>${esc(roomId.toUpperCase())}</strong></p><form id="room-join" class="panel"><label>あなたの名前<input name="name" maxlength="16" required placeholder="例：あおい" autocomplete="nickname"></label><button class="button primary" type="submit">参加する <span>→</span></button></form><p class="error" role="alert">${esc(notice)}</p></main>`;
   document.querySelector<HTMLFormElement>('#room-join')!.addEventListener('submit', async event => {
     event.preventDefault(); const form = new FormData(event.currentTarget as HTMLFormElement);
     try { const result = await api(`/api/rooms/${roomId}/join`, { name: form.get('name') }); enter(result as RoomCredential); }
