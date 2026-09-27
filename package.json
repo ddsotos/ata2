@@ -12,6 +12,7 @@
     "smoke": "node scripts/smoke.mjs",
     "smoke:cpu": "node scripts/cpu-smoke.mjs",
     "smoke:cpu-logs": "node scripts/cpu-log-smoke.mjs",
+    "smoke:jev-budget": "node scripts/jev-budget-smoke.mjs",
     "test:cpu-choice": "node --experimental-strip-types scripts/cpu-choice.mjs",
     "jev:direct": "node --experimental-strip-types scripts/jev-direct.mjs"
   },

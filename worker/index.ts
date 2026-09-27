@@ -2,7 +2,7 @@ import thingsJson from '../data/ata_things.json';
 import descriptionsJson from '../data/ata_descriptions.json';
 import { chooseCpuCardDetailed, defaultCpuPrompts, type CpuDecision, type CpuPrompts, type JevBinding, typeSafeJevBinding } from './cpu';
 
-type Env = { ROOMS: DurableObjectNamespace; JEV_BUDGET: DurableObjectNamespace; ASSETS: Fetcher; AI?: JevBinding; TYPESAFE_API_KEY?: string };
+type Env = { ROOMS: DurableObjectNamespace; JEV_BUDGET: DurableObjectNamespace; ASSETS: Fetcher; AI?: JevBinding; TYPESAFE_API_KEY?: string; JEV_RESET_PASSWORD?: string };
 type Card = { name: string; type?: number };
 type Member = { id: string; name: string; tokenHash: string; spectator: boolean; ready: boolean; cpu?: boolean; cpuPrompts?: CpuPrompts };
 type Player = Member & { spectator: false; score: number; hand: number[]; selection?: number };
@@ -36,12 +36,26 @@ const CPU_RESULT_DELAY = 3000;
 const MAX_CPU_PROMPT_LENGTH = 2000;
 const WIN_SCORE = 5;
 const TYPESAFE_DAILY_LIMIT = 200;
+const RESET_ATTEMPT_LIMIT = 5;
+const RESET_ATTEMPT_WINDOW = 10 * 60 * 1000;
 
 export class JevBudget {
   constructor(private readonly state: DurableObjectState) {}
 
   async fetch(request: Request): Promise<Response> {
-    if (request.method !== 'POST' || new URL(request.url).pathname !== '/claim') return json({ error: 'Not found' }, 404);
+    const path = new URL(request.url).pathname;
+    if (path === '/status' && request.method === 'GET') {
+      const day = new Date().toISOString().slice(0, 10);
+      const current = await this.state.storage.get<{ day: string; count: number }>('daily');
+      const used = current?.day === day ? current.count : 0;
+      return json({ limit: TYPESAFE_DAILY_LIMIT, used, remaining: TYPESAFE_DAILY_LIMIT - used, resetsAt: new Date(Date.parse(`${day}T00:00:00Z`) + 86400000).toISOString() });
+    }
+    if (path === '/reset' && request.method === 'POST') {
+      const day = new Date().toISOString().slice(0, 10);
+      await this.state.storage.put('daily', { day, count: 0 });
+      return json({ limit: TYPESAFE_DAILY_LIMIT, used: 0, remaining: TYPESAFE_DAILY_LIMIT, resetsAt: new Date(Date.parse(`${day}T00:00:00Z`) + 86400000).toISOString() });
+    }
+    if (path !== '/claim' || request.method !== 'POST') return json({ error: 'Not found' }, 404);
     const day = new Date().toISOString().slice(0, 10);
     return this.state.storage.transaction(async storage => {
       const current = await storage.get<{ day: string; count: number }>('daily');
@@ -82,6 +96,17 @@ async function hashToken(token: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
 }
+async function passwordsMatch(input: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [inputHash, expectedHash] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(input)),
+    crypto.subtle.digest('SHA-256', encoder.encode(expected)),
+  ]);
+  const a = new Uint8Array(inputHash); const b = new Uint8Array(expectedHash);
+  let difference = 0;
+  for (let index = 0; index < a.length; index++) difference |= a[index] ^ b[index];
+  return difference === 0;
+}
 function safeName(value: unknown): string {
   if (typeof value !== 'string') throw new Error('名前を入力してください');
   const name = value.trim();
@@ -114,6 +139,16 @@ export default {
     if (logsMatch && request.method === 'GET') {
       return env.ROOMS.get(env.ROOMS.idFromName(logsMatch[1])).fetch('https://room/cpu-logs', {
         headers: { Authorization: request.headers.get('Authorization') ?? '' },
+      });
+    }
+    const budgetMatch = url.pathname.match(/^\/api\/rooms\/([a-f0-9]{12})\/jev-budget(?:\/(reset))?$/);
+    if (budgetMatch && (request.method === 'GET' && !budgetMatch[2] || request.method === 'POST' && budgetMatch[2] === 'reset')) {
+      const body = request.method === 'POST' ? await request.text() : undefined;
+      if (body && body.length > 512) return json({ error: '入力が長すぎます' }, 413);
+      return env.ROOMS.get(env.ROOMS.idFromName(budgetMatch[1])).fetch(`https://room/jev-budget${budgetMatch[2] ? '/reset' : ''}`, {
+        method: request.method,
+        headers: { Authorization: request.headers.get('Authorization') ?? '', 'Content-Type': 'application/json' },
+        body,
       });
     }
     if (roomMatch && request.method === 'GET' && !roomMatch[2]) {
@@ -431,6 +466,35 @@ export class GameRoom {
         const finished = new Set(game.finishedGames ?? []);
         if (!finished.size) return json({ error: 'ゲーム終了後に閲覧できます' }, 409);
         return json({ roomId: game.id, entries: (game.cpuLogs ?? []).filter(entry => finished.has(entry.gameNumber)) });
+      }
+      if (url.pathname === '/jev-budget' || url.pathname === '/jev-budget/reset') {
+        const token = request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+        if (!token) return json({ error: '管理者の参加情報が必要です' }, 401);
+        const game = this.requireGame();
+        const owner = game.players.find(player => player.id === game.ownerId);
+        if (!owner || owner.tokenHash !== await hashToken(token)) return json({ error: '部屋の管理者だけが操作できます' }, 403);
+        const budget = this.env.JEV_BUDGET.get(this.env.JEV_BUDGET.idFromName('global'));
+        if (url.pathname === '/jev-budget' && request.method === 'GET') {
+          const status = await budget.fetch('https://budget/status');
+          return json({ ...await status.json() as Record<string, unknown>, resetAvailable: !!this.env.JEV_RESET_PASSWORD });
+        }
+        if (url.pathname === '/jev-budget/reset' && request.method === 'POST') {
+          const expected = this.env.JEV_RESET_PASSWORD;
+          if (!expected) return json({ error: 'リセット用パスワードがCloudflareに設定されていません' }, 503);
+          const body = await request.json() as { password?: unknown };
+          if (typeof body.password !== 'string' || !body.password || body.password.length > 256) return json({ error: 'パスワードを入力してください' }, 400);
+          const now = Date.now();
+          const attempts = await this.state.storage.get<{ startedAt: number; count: number }>('jevResetAttempts');
+          const current = attempts && now - attempts.startedAt < RESET_ATTEMPT_WINDOW ? attempts : { startedAt: now, count: 0 };
+          if (current.count >= RESET_ATTEMPT_LIMIT) return json({ error: '入力回数が多すぎます。10分後に再試行してください' }, 429);
+          if (!await passwordsMatch(body.password, expected)) {
+            await this.state.storage.put('jevResetAttempts', { startedAt: current.startedAt, count: current.count + 1 });
+            return json({ error: 'パスワードが違います' }, 403);
+          }
+          await this.state.storage.delete('jevResetAttempts');
+          return budget.fetch('https://budget/reset', { method: 'POST' });
+        }
+        return json({ error: 'Not found' }, 404);
       }
       if (url.pathname === '/alarm') return json({ ok: true });
       if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') { this.requireGame(); return this.openSocket(); }

@@ -68,9 +68,11 @@ CPUの選択は、ゲーム番号・ラウンド・役割・お題・候補・�
 
 この公開環境では `TYPESAFE_API_KEY` を Worker Secret に登録し、回答側・親側とも実際の Jev 応答を確認しました。別の環境で設定する場合は、Cloudflare ダッシュボードで Workers & Pages → `watashi-no-sekai-online` → Settings → Variables and Secrets → Add を開き、Type を **Secret**、名前を `TYPESAFE_API_KEY`、値を取得済みの TypeSafe APIキーにして Deploy してください。画面の「Jev接続」が「TypeSafe API（Worker Secret）」になれば、切り替えは完了です。CLI からは `npx wrangler secret put TYPESAFE_API_KEY` でも登録できます。API利用料はキーの契約に従って発生します。公開サイト全体で TypeSafe への送信を UTC の1日あたり200回に制限します。この制限は正確な金額上限ではなく、他のアプリからの利用も含みません。
 
+管理者が当日の200回制限を解除できるようにするには、同じ Variables and Secrets 画面で **Secret** `JEV_RESET_PASSWORD` を追加し、十分に長い専用パスワードを設定して Deploy します。管理者は部屋の「Jev使用回数・上限」で残り回数を確認し、そのパスワードを入力すると、公開サイト全体の当日のカウントを0に戻せます。パスワードはブラウザーの保存領域、部屋データ、GitHubには保存しません。誤入力は部屋ごとに10分間で5回までです。解除後は TypeSafe API の利用料金が発生し得ます。
+
 ローカルの Wrangler では AI binding が使えない環境があるため、その場合とモデルの応答がない場合は候補からランダムに選び、ゲームを続けます。Jev の実応答は、TypeSafe Secret を設定した公開環境か、下記の直接実験画面で確認できます。料金は利用する経路の契約条件を確認してください。
 
-CPUの動作確認は `npm run smoke:cpu`、終了後の選択ログと再戦後の保持は `npm run smoke:cpu-logs`、Jev のリクエスト形式と代替動作は `npm run test:cpu-choice` で確認できます。
+CPUの動作確認は `npm run smoke:cpu`、終了後の選択ログと再戦後の保持は `npm run smoke:cpu-logs`、Jev のリクエスト形式と代替動作は `npm run test:cpu-choice` で確認できます。上限解除のローカル試験は、仮の `JEV_RESET_PASSWORD` を設定した Wrangler で `SMOKE_RESET_PASSWORD` に同じ仮パスワードを渡し、`npm run smoke:jev-budget` で実行します。
 
 ### Cloudflare を通さず Jev の入力を試す
 

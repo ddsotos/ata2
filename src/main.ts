@@ -10,6 +10,7 @@ type CpuLogEntry = {
   instructions: string; source: 'jev' | 'random'; reason?: string; selectedAt: string;
 };
 type CpuLogsResponse = { roomId: string; entries: CpuLogEntry[] };
+type JevBudgetStatus = { limit: number; used: number; remaining: number; resetsAt: string; resetAvailable: boolean };
 type Snapshot = {
   id: string; phase: 'lobby' | 'selecting' | 'reveal' | 'countdown' | 'roundResult' | 'finished'; paused: boolean; pauseReason?: string;
   round: number; winningScore: number; completedRounds: number; finishedReason: 'scoreLimit' | 'roundLimit' | 'early' | null;
@@ -44,6 +45,12 @@ let cpuLogs: CpuLogsResponse | null = null;
 let cpuLogsLoading = false;
 let cpuLogsError = '';
 let selectedCpuId: string | null = null;
+let jevBudgetOpen = false;
+let jevBudgetStatus: JevBudgetStatus | null = null;
+let jevBudgetLoading = false;
+let jevBudgetError = '';
+let jevBudgetNotice = '';
+let jevResetDraft = '';
 
 function esc(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
@@ -108,6 +115,7 @@ function enter(next: RoomCredential): void {
   selectionDraft = null; selectionSending = false; countdownTarget = null; scoreEffect = null;
   cpuEditor = null;
   cpuLogsOpen = false; cpuLogs = null; cpuLogsLoading = false; cpuLogsError = ''; selectedCpuId = null;
+  jevBudgetOpen = false; jevBudgetStatus = null; jevBudgetLoading = false; jevBudgetError = ''; jevBudgetNotice = ''; jevResetDraft = '';
   credential = next; localStorage.setItem(storedKey(next.roomId), JSON.stringify(next));
   history.pushState({}, '', `/r/${next.roomId}`); snapshot = null; connect();
 }
@@ -204,6 +212,54 @@ function cpuLogPanel(game: Snapshot): string {
   return `<section class="stage cpu-log-panel"><div class="cpu-log-heading"><div><p class="eyebrow">CPU LOG</p><h2>CPUの選択履歴</h2></div><button class="button secondary" id="close-cpu-logs">閉じる</button></div><p class="muted">終了したゲームの記録だけを表示します。部屋の有効期限内にJSONを保存してください。</p>${body}</section>`;
 }
 
+function jevBudgetPanel(game: Snapshot): string {
+  if (!game.youAreOwner || game.cpuProvider !== 'typesafe' || !jevBudgetOpen) return '';
+  const status = jevBudgetStatus;
+  return `<section class="stage jev-budget-panel"><div class="cpu-log-heading"><div><p class="eyebrow">JEV USAGE</p><h2>Jev呼び出し上限</h2></div><button class="button secondary" id="close-jev-budget">閉じる</button></div>
+    ${jevBudgetLoading ? '<p class="muted">使用回数を確認しています…</p>' : status ? `<p>本日の使用回数: <strong>${status.used} / ${status.limit}</strong>（残り ${status.remaining} 回）</p><p class="muted">次の自動リセット: ${esc(new Date(status.resetsAt).toLocaleString('ja-JP'))}</p>` : ''}
+    ${jevBudgetError ? `<p class="error" role="alert">${esc(jevBudgetError)}</p>` : ''}${jevBudgetNotice ? `<p class="notice" role="status">${esc(jevBudgetNotice)}</p>` : ''}
+    <button type="button" class="button secondary" id="refresh-jev-budget" ${jevBudgetLoading ? 'disabled' : ''}>使用回数を更新</button>
+    ${status && !status.resetAvailable ? '<p class="muted">リセットするには、Cloudflare WorkerのSecretに JEV_RESET_PASSWORD を設定してください。</p>' : status?.resetAvailable ? `<form id="jev-budget-reset" class="jev-budget-form"><label for="jev-reset-password">Cloudflareに設定したリセット用パスワード</label><input id="jev-reset-password" type="password" name="password" value="${esc(jevResetDraft)}" autocomplete="off" maxlength="256" required><p class="muted">クリアするとTypeSafeへの呼び出しが再開し、利用料金が発生する可能性があります。</p><button class="button primary" type="submit" ${jevBudgetLoading ? 'disabled' : ''}>本日の上限をクリア</button></form>` : ''}</section>`;
+}
+
+async function loadJevBudget(): Promise<void> {
+  if (!credential || jevBudgetLoading) return;
+  const roomId = credential.roomId;
+  jevBudgetLoading = true; jevBudgetError = ''; jevBudgetNotice = ''; renderRoom();
+  try {
+    const response = await fetch(`/api/rooms/${roomId}/jev-budget`, { headers: { Authorization: `Bearer ${credential.token}` }, cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? '使用回数を確認できませんでした');
+    if (credential?.roomId === roomId) jevBudgetStatus = data as JevBudgetStatus;
+  } catch (error) {
+    if (credential?.roomId === roomId) jevBudgetError = error instanceof Error ? error.message : '使用回数を確認できませんでした';
+  } finally {
+    if (credential?.roomId === roomId) { jevBudgetLoading = false; renderRoom(); }
+  }
+}
+
+async function resetJevBudget(password: string): Promise<void> {
+  if (!credential || jevBudgetLoading) return;
+  const roomId = credential.roomId;
+  jevBudgetLoading = true; jevBudgetError = ''; jevBudgetNotice = ''; renderRoom();
+  try {
+    const response = await fetch(`/api/rooms/${roomId}/jev-budget/reset`, {
+      method: 'POST', headers: { Authorization: `Bearer ${credential.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? '上限をクリアできませんでした');
+    if (credential?.roomId === roomId) {
+      jevBudgetStatus = { ...data, resetAvailable: true } as JevBudgetStatus;
+      jevResetDraft = ''; jevBudgetNotice = '本日のJev呼び出し回数を0に戻しました';
+    }
+  } catch (error) {
+    if (credential?.roomId === roomId) jevBudgetError = error instanceof Error ? error.message : '上限をクリアできませんでした';
+  } finally {
+    if (credential?.roomId === roomId) { jevBudgetLoading = false; renderRoom(); }
+  }
+}
+
 async function loadCpuLogs(): Promise<void> {
   if (!credential || cpuLogsLoading) return;
   const roomId = credential.roomId;
@@ -292,8 +348,8 @@ function renderRoom(): void {
   const ownerOffline = !game.players.find(p => p.id === game.ownerId)?.online;
   app.innerHTML = `<main class="game-shell">
     <header class="topbar"><a class="wordmark" href="/">視 <span>私の世界の見方</span></a><div class="topbar-right"><span class="room-chip">部屋 ${esc(game.id.toUpperCase())}</span><button class="button text-button" id="copy-top">招待を共有 ↗</button></div></header>
-    <div class="game-layout"><aside class="sidebar"><div class="sidebar-title"><span class="eyebrow">PLAYERS</span><span class="pill">${game.players.length} / 8</span></div><ul class="player-list">${playerList(game)}</ul><div class="sidebar-bottom"><span class="presence-dot"></span>${game.spectators}人が観戦中</div>${game.youAreOwner && game.phase !== 'lobby' && game.phase !== 'finished' ? '<button class="button reset-button" id="finish-early">途中終了して結果を見る</button>' : ''}</aside>
-      <div class="game-main">${game.paused ? `<div class="pause-banner"><b>ゲームを一時停止中</b><span>${esc(game.pauseReason ?? '参加者の復帰を待っています')}</span>${game.youAreOwner && ownerOffline ? '<small>管理者の引き継ぎを待っています</small>' : ''}</div>` : ''}${notice ? `<div class="notice" role="status">${esc(notice)}<button id="dismiss-notice" aria-label="閉じる">×</button></div>` : ''}${stage}${cpuLogPanel(game)}</div></div>
+    <div class="game-layout"><aside class="sidebar"><div class="sidebar-title"><span class="eyebrow">PLAYERS</span><span class="pill">${game.players.length} / 8</span></div><ul class="player-list">${playerList(game)}</ul><div class="sidebar-bottom"><span class="presence-dot"></span>${game.spectators}人が観戦中</div>${game.youAreOwner && game.cpuProvider === 'typesafe' ? '<button class="button reset-button" id="open-jev-budget">Jev使用回数・上限</button>' : ''}${game.youAreOwner && game.phase !== 'lobby' && game.phase !== 'finished' ? '<button class="button reset-button" id="finish-early">途中終了して結果を見る</button>' : ''}</aside>
+      <div class="game-main">${game.paused ? `<div class="pause-banner"><b>ゲームを一時停止中</b><span>${esc(game.pauseReason ?? '参加者の復帰を待っています')}</span>${game.youAreOwner && ownerOffline ? '<small>管理者の引き継ぎを待っています</small>' : ''}</div>` : ''}${notice ? `<div class="notice" role="status">${esc(notice)}<button id="dismiss-notice" aria-label="閉じる">×</button></div>` : ''}${stage}${jevBudgetPanel(game)}${cpuLogPanel(game)}</div></div>
     <footer class="game-footer">友達との会話は、いつもの通話アプリでどうぞ。 <span>WATASHI NO SEKAI NO MIKATA</span></footer>
   </main>`;
   bindRoomEvents(game, inviteUrl);
@@ -310,6 +366,15 @@ function renderRoom(): void {
 }
 
 function bindRoomEvents(game: Snapshot, inviteUrl: string): void {
+  document.querySelector('#open-jev-budget')?.addEventListener('click', () => { jevBudgetOpen = true; void loadJevBudget(); });
+  document.querySelector('#close-jev-budget')?.addEventListener('click', () => { jevBudgetOpen = false; jevResetDraft = ''; renderRoom(); });
+  document.querySelector('#refresh-jev-budget')?.addEventListener('click', () => void loadJevBudget());
+  document.querySelector<HTMLInputElement>('#jev-reset-password')?.addEventListener('input', event => { jevResetDraft = (event.currentTarget as HTMLInputElement).value; });
+  document.querySelector<HTMLFormElement>('#jev-budget-reset')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const password = (event.currentTarget as HTMLFormElement).querySelector<HTMLInputElement>('#jev-reset-password')?.value ?? '';
+    void resetJevBudget(password);
+  });
   document.querySelector('#open-cpu-logs')?.addEventListener('click', () => { cpuLogsOpen = true; if (cpuLogs) renderRoom(); else void loadCpuLogs(); });
   document.querySelector('#close-cpu-logs')?.addEventListener('click', () => { cpuLogsOpen = false; renderRoom(); });
   document.querySelectorAll<HTMLElement>('[data-cpu-log]').forEach(button => button.addEventListener('click', () => { selectedCpuId = button.dataset.cpuLog ?? null; renderRoom(); }));
