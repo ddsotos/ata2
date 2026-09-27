@@ -1,3 +1,5 @@
+import prompts from '../data/jev_prompts.json' with { type: 'json' };
+
 export type JevBinding = { run(model: string, input: unknown): Promise<unknown> };
 
 export function createCpuJevInput(theme: string, candidates: string[], role: 'answer' | 'dealer') {
@@ -6,9 +8,7 @@ export function createCpuJevInput(theme: string, candidates: string[], role: 'an
     questions: {
       card: {
         type: 'choice',
-        instructions: role === 'answer'
-          ? '日本語の大喜利ゲームです。お題の空欄に入れると、意外で面白い回答になるカードを1枚選んでください。候補名の意味とお題の文脈を考慮してください。'
-          : '日本語の大喜利ゲームの親です。お題への回答として、最も意外で面白いカードを1枚選んでください。',
+        instructions: prompts[role],
         criteria: Object.fromEntries(candidates.map((name, index) => [`card_${index}`, name])),
       },
     },

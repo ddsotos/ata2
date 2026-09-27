@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createCpuJevInput } from '../worker/cpu.ts';
 
@@ -8,16 +8,35 @@ const port = Number(process.env.JEV_PLAYGROUND_PORT ?? 8790);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('JEV_PLAYGROUND_PORT が不正です');
 const origin = `http://${host}:${port}`;
 const sessionToken = randomBytes(24).toString('hex');
-const sampleTheme = '私の秘密の才能は＿＿です。';
-const sampleCards = ['宇宙人', '給食', 'Wi-Fi', '校長先生', '冷蔵庫'];
-const presets = {
-  answer: createCpuJevInput(sampleTheme, sampleCards, 'answer'),
-  dealer: createCpuJevInput(sampleTheme, sampleCards, 'dealer'),
-};
 const html = (await readFile(new URL('./jev-direct.html', import.meta.url), 'utf8'))
-  .replace('__SESSION_TOKEN__', sessionToken)
-  .replace('__PRESETS__', JSON.stringify(presets).replaceAll('<', '\\u003c'));
+  .replace('__SESSION_TOKEN__', sessionToken);
 let runCount = 0;
+let sample = null;
+
+async function loadSample(newCombination) {
+  const [things, descriptions, prompts] = await Promise.all([
+    readFile(new URL('../data/ata_things.json', import.meta.url), 'utf8').then(JSON.parse),
+    readFile(new URL('../data/ata_descriptions.json', import.meta.url), 'utf8').then(JSON.parse),
+    readFile(new URL('../data/jev_prompts.json', import.meta.url), 'utf8').then(JSON.parse),
+  ]);
+  const cards = things.members.map(card => card.name).filter(name => typeof name === 'string' && name);
+  const themes = descriptions.members.map(card => card.name).filter(name => typeof name === 'string' && name);
+  if (cards.length < 5 || !themes.length || typeof prompts.answer !== 'string' || typeof prompts.dealer !== 'string') {
+    throw new Error('カード・お題・指示文のJSONを確認してください');
+  }
+  if (newCombination || !sample || sample.cardIndices.some(index => index >= cards.length) || sample.themeIndex >= themes.length) {
+    const picked = new Set();
+    while (picked.size < 5) picked.add(randomInt(cards.length));
+    sample = { themeIndex: randomInt(themes.length), cardIndices: [...picked] };
+  }
+  const theme = themes[sample.themeIndex];
+  const candidates = sample.cardIndices.map(index => cards[index]);
+  const answer = createCpuJevInput(theme, candidates, 'answer');
+  const dealer = createCpuJevInput(theme, candidates, 'dealer');
+  answer.questions.card.instructions = prompts.answer;
+  dealer.questions.card.instructions = prompts.dealer;
+  return { answer, dealer, source: { cards: 'data/ata_things.json', themes: 'data/ata_descriptions.json', instructions: 'data/jev_prompts.json' } };
+}
 
 function sendJson(response, status, data) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -37,7 +56,8 @@ async function readJson(request) {
 
 const server = createServer(async (request, response) => {
   if (request.headers.host !== `${host}:${port}`) return sendJson(response, 403, { error: 'localhost からのみアクセスできます' });
-  if (request.method === 'GET' && request.url === '/') {
+  const url = new URL(request.url, origin);
+  if (request.method === 'GET' && url.pathname === '/') {
     response.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
@@ -46,7 +66,11 @@ const server = createServer(async (request, response) => {
     });
     return response.end(html);
   }
-  if (request.method !== 'POST' || request.url !== '/api/jev') return sendJson(response, 404, { error: 'Not found' });
+  if (request.method === 'GET' && url.pathname === '/api/sample') {
+    try { return sendJson(response, 200, await loadSample(url.searchParams.get('new') === '1')); }
+    catch (error) { return sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }); }
+  }
+  if (request.method !== 'POST' || url.pathname !== '/api/jev') return sendJson(response, 404, { error: 'Not found' });
   if (request.headers.origin !== origin || request.headers['x-session-token'] !== sessionToken || !request.headers['content-type']?.startsWith('application/json')) {
     return sendJson(response, 403, { error: 'このローカル画面から送信してください' });
   }
