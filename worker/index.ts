@@ -1,15 +1,16 @@
 import thingsJson from '../data/ata_things.json';
 import descriptionsJson from '../data/ata_descriptions.json';
+import { chooseCpuCard, type JevBinding } from './cpu';
 
-type Env = { ROOMS: DurableObjectNamespace; ASSETS: Fetcher };
+type Env = { ROOMS: DurableObjectNamespace; ASSETS: Fetcher; AI?: JevBinding };
 type Card = { name: string; type?: number };
-type Member = { id: string; name: string; tokenHash: string; spectator: boolean; ready: boolean };
+type Member = { id: string; name: string; tokenHash: string; spectator: boolean; ready: boolean; cpu?: boolean };
 type Player = Member & { spectator: false; score: number; hand: number[]; selection?: number };
 type Answer = { cardId: number; playerId: string | null };
 type Game = {
   schema: number; id: string; createdAt: number; updatedAt: number; ownerId: string;
   phase: 'lobby' | 'selecting' | 'reveal' | 'countdown' | 'roundResult' | 'finished'; paused: boolean;
-  pauseReason?: string; ownerDisconnectedAt?: number; round: number; dealerId: string;
+  pauseReason?: string; ownerDisconnectedAt?: number; cpuNextAt?: number; round: number; dealerId: string;
   players: Player[]; spectators: Member[];
   deck: number[]; discard: number[]; descriptionDeck: number[]; descriptionDiscard: number[];
   currentDescription?: number; answers: Answer[]; revealed: number; chosenIndex?: number; revealAt?: number;
@@ -23,6 +24,8 @@ const MAX_SPECTATORS = 24;
 const ROOM_TTL = 24 * 60 * 60 * 1000;
 const OWNER_GRACE = 2 * 60 * 1000;
 const RESULT_COUNTDOWN = 3000;
+const CPU_DELAY = 900;
+const CPU_RESULT_DELAY = 3000;
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -98,12 +101,15 @@ export default {
 
 export class GameRoom {
   private readonly state: DurableObjectState;
+  private readonly env: Env;
   private readonly closingSockets = new WeakSet<WebSocket>();
+  private cpuBusy = false;
   private game?: Game;
   private readonly ready: Promise<void>;
 
-  constructor(state: DurableObjectState) {
+  constructor(state: DurableObjectState, env: Env) {
     this.state = state;
+    this.env = env;
     this.ready = state.blockConcurrencyWhile(async () => {
       this.game = await state.storage.get<Game>('game');
     });
@@ -116,7 +122,9 @@ export class GameRoom {
     const deadline = game.ownerDisconnectedAt ? game.ownerDisconnectedAt + OWNER_GRACE : Infinity;
     const ownerDeadline = deadline > Date.now() ? deadline : Infinity;
     const revealDeadline = game.phase === 'countdown' && game.revealAt ? game.revealAt : Infinity;
-    await this.state.storage.setAlarm(Math.min(game.updatedAt + ROOM_TTL, ownerDeadline, revealDeadline));
+    if (this.hasCpuAction() && !this.cpuBusy) game.cpuNextAt ??= Date.now() + (game.phase === 'roundResult' ? CPU_RESULT_DELAY : CPU_DELAY);
+    else game.cpuNextAt = undefined;
+    await this.state.storage.setAlarm(Math.min(game.updatedAt + ROOM_TTL, ownerDeadline, revealDeadline, game.cpuNextAt ?? Infinity));
   }
   private requireGame(): Game {
     if (!this.game) throw new Error('部屋が見つかりません');
@@ -127,7 +135,9 @@ export class GameRoom {
     return (socket.deserializeAttachment() as { memberId?: string } | null)?.memberId;
   }
   private onlineIds(): Set<string> {
-    return new Set(this.state.getWebSockets().filter(ws => ws.readyState === 1 && !this.closingSockets.has(ws)).map(ws => this.socketMember(ws)).filter((id): id is string => !!id));
+    const ids = new Set(this.state.getWebSockets().filter(ws => ws.readyState === 1 && !this.closingSockets.has(ws)).map(ws => this.socketMember(ws)).filter((id): id is string => !!id));
+    for (const player of this.game?.players ?? []) if (player.cpu) ids.add(player.id);
+    return ids;
   }
   private view(memberId?: string): unknown {
     const game = this.requireGame(); const online = this.onlineIds();
@@ -140,7 +150,7 @@ export class GameRoom {
       round: game.round, currentDescription: game.currentDescription === undefined ? null : descriptions[game.currentDescription].name,
       dealerId: game.dealerId, ownerId: game.ownerId, youId: memberId ?? null,
       youAreOwner: memberId === game.ownerId, spectator: !!me && !game.players.some(p => p.id === memberId),
-      players: game.players.map(p => ({ id: p.id, name: p.name, score: p.score, ready: p.ready, online: online.has(p.id), isDealer: p.id === game.dealerId })),
+      players: game.players.map(p => ({ id: p.id, name: p.name, score: p.score, ready: p.ready, online: online.has(p.id), isDealer: p.id === game.dealerId, cpu: !!p.cpu })),
       spectators: game.spectators.length, answers, revealed: game.revealed,
       chosenCard: game.phase === 'countdown' && game.chosenIndex !== undefined ? things[game.answers[game.chosenIndex].cardId].name : null,
       chosenIndex: game.phase === 'countdown' ? game.chosenIndex ?? null : null,
@@ -195,7 +205,7 @@ export class GameRoom {
     this.promoteSpectators();
     game.deck = newDeck(things.length); game.discard = [];
     game.descriptionDeck = newDeck(descriptions.length); game.descriptionDiscard = [];
-    game.players.forEach(player => { player.score = 0; player.ready = false; player.hand = []; player.selection = undefined; });
+    game.players.forEach(player => { player.score = 0; player.ready = !!player.cpu; player.hand = []; player.selection = undefined; });
     game.phase = 'lobby'; game.paused = false; game.pauseReason = undefined; game.ownerDisconnectedAt = undefined;
     game.round = 0; game.dealerId = game.ownerId; game.result = undefined;
     game.answers = []; game.currentDescription = undefined; game.revealed = 0; game.chosenIndex = undefined; game.revealAt = undefined;
@@ -204,7 +214,7 @@ export class GameRoom {
     const game = this.requireGame();
     if (!game.ownerDisconnectedAt || game.ownerDisconnectedAt + OWNER_GRACE > now) return;
     const online = this.onlineIds();
-    const successor = game.players.find(player => player.id !== game.ownerId && online.has(player.id));
+    const successor = game.players.find(player => !player.cpu && player.id !== game.ownerId && online.has(player.id));
     if (!successor) return;
     game.ownerId = successor.id; game.ownerDisconnectedAt = undefined;
     this.broadcastNotice(`${successor.name}さんに部屋の管理を引き継ぎました`);
@@ -214,6 +224,65 @@ export class GameRoom {
     if (this.requireGame().ownerId !== memberId) throw new Error('この操作は部屋の作成者だけが行えます');
   }
   private assertNotPaused(): void { if (this.requireGame().paused) throw new Error('参加者の復帰を待っています'); }
+
+  private hasCpuAction(): boolean {
+    const game = this.requireGame();
+    if (game.paused) return false;
+    if (game.phase === 'selecting') return game.players.some(p => p.cpu && p.id !== game.dealerId && p.selection === undefined);
+    if (game.phase === 'reveal' || game.phase === 'roundResult') return !!game.players.find(p => p.id === game.dealerId)?.cpu;
+    return false;
+  }
+
+  private selectCard(player: Player, cardId: number): void {
+    const game = this.requireGame();
+    player.selection = cardId;
+    player.hand.splice(player.hand.indexOf(cardId), 1);
+    player.hand.push(this.drawThing());
+    if (game.players.filter(p => p.id !== game.dealerId).every(p => p.selection !== undefined)) {
+      game.answers = shuffled([
+        ...game.players.filter(p => p.id !== game.dealerId).map(p => ({ cardId: p.selection!, playerId: p.id })),
+        { cardId: this.drawThing(), playerId: null },
+      ]);
+      game.phase = 'reveal'; game.revealed = 0;
+    }
+  }
+
+  private chooseAnswer(index: number): void {
+    const game = this.requireGame();
+    game.chosenIndex = index; game.revealAt = Date.now() + RESULT_COUNTDOWN;
+    game.phase = 'countdown';
+  }
+
+  private advanceRound(): void {
+    const game = this.requireGame();
+    const current = game.players.findIndex(p => p.id === game.dealerId);
+    game.dealerId = game.players[(current + 1) % game.players.length].id;
+    game.round++; this.beginRound();
+  }
+
+  private async cpuStep(): Promise<void> {
+    const game = this.requireGame();
+    if (!this.hasCpuAction()) return;
+    if (game.phase === 'selecting') {
+      const player = game.players.find(p => p.cpu && p.id !== game.dealerId && p.selection === undefined)!;
+      const round = game.round; const hand = [...player.hand];
+      const theme = descriptions[game.currentDescription!].name;
+      const index = await chooseCpuCard(this.env.AI, theme, hand.map(id => things[id].name), 'answer');
+      if (this.game !== game || game.paused || game.phase !== 'selecting' || game.round !== round || !game.players.includes(player) || player.selection !== undefined) return;
+      const cardId = hand[index];
+      if (player.hand.includes(cardId)) this.selectCard(player, cardId);
+      return;
+    }
+    if (game.phase === 'reveal') {
+      if (game.revealed < game.answers.length) { game.revealed++; return; }
+      const round = game.round; const answers = game.answers;
+      const theme = descriptions[game.currentDescription!].name;
+      const index = await chooseCpuCard(this.env.AI, theme, answers.map(answer => things[answer.cardId].name), 'dealer');
+      if (this.game !== game || game.paused || game.phase !== 'reveal' || game.round !== round || game.answers !== answers || game.revealed !== answers.length) return;
+      this.chooseAnswer(index); return;
+    }
+    if (game.phase === 'roundResult') this.advanceRound();
+  }
 
   private finishCountdown(): void {
     const game = this.requireGame();
@@ -305,6 +374,14 @@ export class GameRoom {
       if (!game.players.some(p => p.id === memberId) && !game.spectators.some(p => p.id === memberId)) throw new Error('部屋から退出しています');
       const payload = data.payload ?? {};
       switch (data.type) {
+        case 'addCpu': {
+          this.assertOwner(memberId);
+          if (game.phase !== 'lobby' || game.players.length >= MAX_PLAYERS) throw new Error('待機中で空席があるときにCPUを追加できます');
+          const used = new Set(game.players.map(player => player.name));
+          let number = 1; while (used.has(`CPU ${number}`)) number++;
+          game.players.push({ id: randomId(16), name: `CPU ${number}`, tokenHash: randomId(32), spectator: false, ready: true, cpu: true, score: 0, hand: [] });
+          break;
+        }
         case 'ready': {
           const player = this.player(memberId); if (!player || game.phase !== 'lobby') throw new Error('準備状態を変更できません');
           player.ready = !player.ready; break;
@@ -321,15 +398,7 @@ export class GameRoom {
           const player = this.player(memberId); if (!player || game.phase !== 'selecting' || player.id === game.dealerId || player.selection !== undefined) throw new Error('今は回答を選べません');
           const cardId = Number(payload.cardId);
           if (!Number.isInteger(cardId) || !player.hand.includes(cardId)) throw new Error('手札からカードを選んでください');
-          player.selection = cardId; player.hand.splice(player.hand.indexOf(cardId), 1); player.hand.push(this.drawThing());
-          if (game.players.filter(p => p.id !== game.dealerId).every(p => p.selection !== undefined)) {
-            game.answers = shuffled([
-              ...game.players.filter(p => p.id !== game.dealerId).map(p => ({ cardId: p.selection!, playerId: p.id })),
-              { cardId: this.drawThing(), playerId: null },
-            ]);
-            game.phase = 'reveal'; game.revealed = 0;
-          }
-          break;
+          this.selectCard(player, cardId); break;
         }
         case 'reveal': {
           this.assertNotPaused();
@@ -340,14 +409,12 @@ export class GameRoom {
           this.assertNotPaused();
           const index = Number(payload.index);
           if (!this.isDealer(memberId) || game.phase !== 'reveal' || game.revealed !== game.answers.length || !Number.isInteger(index) || !game.answers[index]) throw new Error('回答を選べません');
-          game.chosenIndex = index; game.revealAt = Date.now() + RESULT_COUNTDOWN;
-          game.phase = 'countdown'; break;
+          this.chooseAnswer(index); break;
         }
         case 'advance': {
           this.assertNotPaused();
           if (!this.isDealer(memberId) || game.phase !== 'roundResult') throw new Error('次のラウンドへ進めません');
-          const current = game.players.findIndex(p => p.id === game.dealerId);
-          game.dealerId = game.players[(current + 1) % game.players.length].id; game.round++; this.beginRound(); break;
+          this.advanceRound(); break;
         }
         case 'rematch': {
           this.assertOwner(memberId);
@@ -415,6 +482,12 @@ export class GameRoom {
     }
     this.transferOwnerIfDue(now);
     if (game.phase === 'countdown' && game.revealAt && game.revealAt <= now) this.finishCountdown();
+    if (!this.cpuBusy && game.cpuNextAt && game.cpuNextAt <= now && this.hasCpuAction()) {
+      this.cpuBusy = true;
+      game.cpuNextAt = undefined;
+      try { await this.cpuStep(); }
+      finally { this.cpuBusy = false; }
+    }
     await this.save(); this.broadcast();
   }
 }

@@ -38,6 +38,7 @@ npm exec --yes --package=node@22 -- wrangler dev
 ## 遊び方
 
 - 作成者が部屋を作り、招待 URL または QR コードを共有します。
+- 作成者は待機画面の「CPUを追加」から空席へCPUを入れられます。CPUは準備完了済みとして扱われ、1人でもCPUと対戦できます。作成者はCPUをプレイヤー一覧から除外できます。
 - 2〜8人が参加し、全員が「準備完了」にしたら作成者が開始します。
 - 親以外は5枚の手札から1枚を選び、確定ボタンで提出します。親も手札を見られますが、そのラウンドでは選択できません。
 - 親は回答を1枚ずつ公開し、一番好きな回答を選んで確定します。公開済みの回答を表示したまま選ばれた1枚を強調し、3秒のカウントダウン後に回答者と得点を公開します。
@@ -54,3 +55,11 @@ npm exec --yes --package=node@22 -- wrangler dev
 - `wrangler.toml`: Workers、静的アセット、SQLite Durable Object の設定
 
 ゲーム状態は Durable Object の SQLite ストレージに保存し、24時間操作のない部屋を削除します。プレイヤーの手札は認証済みの本人にだけ配信します。アカウント登録はなく、復帰用トークンをブラウザのローカルストレージに保存します。
+
+## Jev CPU
+
+Cloudflare AI の [`typesafe/jev`](https://developers.cloudflare.com/ai/models/typesafe/jev/) を Worker の AI binding から呼びます。回答者のCPUはお題と5枚の手札、親のCPUはお題と公開済みの回答から、Jev の Choice で1枚を選びます。候補以外のカードは採用しません。
+
+ローカルの Wrangler では AI binding が使えない環境があるため、その場合とモデルの応答がない場合は候補からランダムに選び、ゲームを続けます。実際に Jev を使う動作は、Cloudflare アカウントで AI binding を有効にして公開した環境で確認してください。Jev の利用には Cloudflare のモデル利用料金がかかります。利用条件と料金はリンク先で確認してください。
+
+CPUの動作確認は `npm run smoke:cpu`、Jev のリクエスト形式と代替動作の確認は `npm run test:cpu-choice` で実行できます。

@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import './style.css';
 
-type Player = { id: string; name: string; score: number; ready: boolean; online: boolean; isDealer: boolean };
+type Player = { id: string; name: string; score: number; ready: boolean; online: boolean; isDealer: boolean; cpu: boolean };
 type Snapshot = {
   id: string; phase: 'lobby' | 'selecting' | 'reveal' | 'countdown' | 'roundResult' | 'finished'; paused: boolean; pauseReason?: string;
   round: number; currentDescription: string | null; dealerId: string; ownerId: string; youId: string | null;
@@ -156,7 +156,7 @@ function playerList(game: Snapshot): string {
   return game.players.map(player => `
     <li class="player ${player.isDealer ? 'dealer' : ''} ${player.id === game.youId ? 'you' : ''} ${scoreEffect?.playerId === player.id ? scoreEffect.delta > 0 ? 'score-up' : 'score-down' : ''}">
       <span class="avatar">${esc([...player.name][0] ?? '？')}</span>
-      <span class="player-copy"><b>${esc(player.name)}${player.id === game.youId ? '<small>あなた</small>' : ''}</b><small>${player.isDealer ? '親' : player.ready && game.phase === 'lobby' ? '準備OK' : game.phase === 'lobby' ? '準備中' : player.online ? '参加中' : '切断中'}</small></span>
+      <span class="player-copy"><b>${esc(player.name)}${player.id === game.youId ? '<small>あなた</small>' : ''}</b><small>${player.isDealer ? player.cpu ? '親 · CPU' : '親' : player.cpu ? game.phase === 'lobby' ? '準備OK' : 'CPU' : player.ready && game.phase === 'lobby' ? '準備OK' : game.phase === 'lobby' ? '準備中' : player.online ? '参加中' : '切断中'}</small></span>
       <span class="score">${player.score}<small>点</small>${scoreEffect?.playerId === player.id ? `<em>${scoreEffect.delta > 0 ? '+1' : '−1'}</em>` : ''}</span>
       ${game.youAreOwner && player.id !== game.ownerId ? `<button class="icon-button remove" data-remove="${esc(player.id)}" aria-label="${esc(player.name)}を除外">×</button>` : ''}
     </li>`).join('');
@@ -177,6 +177,7 @@ function renderRoom(): void {
       <div class="invite-row"><code>${esc(inviteUrl)}</code><button class="button compact" id="copy-invite">リンクをコピー</button><button class="button compact" id="show-qr">QRコード</button></div>
       <div id="qr-panel" class="qr-panel" ${qrOpen ? '' : 'hidden'}><img id="qr-image" src="${qrDataUrl}" alt="部屋への招待QRコード"><p>スマートフォンで読み取って参加</p></div>
       <div class="stage-actions">${activePlayer ? `<button class="button ${game.players.find(p => p.id === game.youId)?.ready ? 'secondary' : 'primary'}" id="ready">${game.players.find(p => p.id === game.youId)?.ready ? '準備OK ✓' : '準備完了'}</button>` : '<span class="pill">観戦で参加中 · 次のゲームから参加できます</span>'}
+      ${game.youAreOwner && game.players.length < 8 ? '<button class="button secondary" id="add-cpu">CPUを追加</button>' : ''}
       ${game.youAreOwner ? `<button class="button primary" id="start" ${game.readyToStart ? '' : 'disabled'}>ゲームを始める <span>→</span></button>` : ''}</div></section>`;
   } else if (game.phase === 'selecting') {
     const dealer = game.youId === game.dealerId;
@@ -238,6 +239,7 @@ function bindRoomEvents(game: Snapshot, inviteUrl: string): void {
     }
   });
   document.querySelector('#ready')?.addEventListener('click', () => send('ready'));
+  document.querySelector('#add-cpu')?.addEventListener('click', () => send('addCpu'));
   document.querySelector('#start')?.addEventListener('click', () => send('start'));
   document.querySelector('#reveal')?.addEventListener('click', () => send('reveal'));
   document.querySelector('#advance')?.addEventListener('click', () => send('advance'));
