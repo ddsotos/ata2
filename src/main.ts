@@ -12,7 +12,7 @@ type CpuLogEntry = {
 type CpuLogsResponse = { roomId: string; entries: CpuLogEntry[] };
 type Snapshot = {
   id: string; phase: 'lobby' | 'selecting' | 'reveal' | 'countdown' | 'roundResult' | 'finished'; paused: boolean; pauseReason?: string;
-  round: number; roundLimit: number; completedRounds: number; finishedReason: 'roundLimit' | 'early' | null;
+  round: number; winningScore: number; completedRounds: number; finishedReason: 'scoreLimit' | 'roundLimit' | 'early' | null;
   currentDescription: string | null; dealerId: string; ownerId: string; youId: string | null;
   youAreOwner: boolean; spectator: boolean; players: Player[]; spectators: number;
   answers: { index: number; card: string | null }[]; revealed: number;
@@ -242,7 +242,7 @@ function renderRoom(): void {
   const activePlayer = game.players.some(p => p.id === game.youId);
   let stage = '';
   if (game.phase === 'lobby') {
-    stage = `<section class="stage lobby-stage"><p class="eyebrow">GAME ROOM</p><h2>みんなが集まるのを待っています</h2><p class="muted">${game.players.length}/8 人 · 2人以上 · 全${game.roundLimit}ラウンドで遊べます</p>
+    stage = `<section class="stage lobby-stage"><p class="eyebrow">GAME ROOM</p><h2>みんなが集まるのを待っています</h2><p class="muted">${game.players.length}/8 人 · 2人以上 · ${game.winningScore}点先取で遊べます</p>
       <div class="invite-row"><code>${esc(inviteUrl)}</code><button class="button compact" id="copy-invite">リンクをコピー</button><button class="button compact" id="show-qr">QRコード</button></div>
       <div id="qr-panel" class="qr-panel" ${qrOpen ? '' : 'hidden'}><img id="qr-image" src="${qrDataUrl}" alt="部屋への招待QRコード"><p>スマートフォンで読み取って参加</p></div>
       <div class="stage-actions">${activePlayer ? `<button class="button ${game.players.find(p => p.id === game.youId)?.ready ? 'secondary' : 'primary'}" id="ready">${game.players.find(p => p.id === game.youId)?.ready ? '準備OK ✓' : '準備完了'}</button>` : '<span class="pill">観戦で参加中 · 次のゲームから参加できます</span>'}
@@ -272,7 +272,7 @@ function renderRoom(): void {
     stage = `<section class="stage countdown-stage"><p class="eyebrow">ROUND ${game.round}</p><h2>選ばれた回答は…</h2><article class="prompt-card small"><span class="prompt-label">お題</span><p>${esc(game.currentDescription)}</p></article><div class="revealed-grid">${game.answers.map(answer => `<div class="answer-card reveal-card is-revealed ${answer.index === game.chosenIndex ? 'is-chosen' : ''}">${esc(answer.card)}${answer.index === game.chosenIndex ? '<span>選ばれた回答</span>' : ''}</div>`).join('')}</div><div class="countdown-number" id="countdown-number" aria-hidden="true">3</div><p class="muted center" id="countdown-message" role="status">誰が出したかは、カウントダウン後に公開します</p></section>`;
   } else if (game.phase === 'roundResult') {
     const result = game.result;
-    stage = `<section class="stage result-stage"><p class="eyebrow">ROUND ${game.round} / ${game.roundLimit} RESULT</p><h2>選ばれた回答</h2>
+    stage = `<section class="stage result-stage"><p class="eyebrow">ROUND ${game.round} RESULT</p><h2>選ばれた回答</h2>
       <article class="winning-card"><span class="prompt-label">${result?.dummy ? 'ダミー回答' : `回答者 · ${esc(result?.winnerName)}`}</span><p>${esc(result?.card)}</p></article>
       ${scoreEffect ? `<div class="score-celebration ${scoreEffect.delta > 0 ? 'positive' : 'negative'}" role="status"><strong>${scoreEffect.delta > 0 ? '+1' : '−1'}</strong><span>${esc(scoreEffect.name)} さん</span></div>` : ''}
       <div class="result-message">${result?.dummy ? '親は1点減点（0点が下限）' : `🎉 ${esc(result?.winnerName)} さんに1点！`}</div>
@@ -282,7 +282,7 @@ function renderRoom(): void {
     const leaders = ranking.filter(player => player.score === ranking[0]?.score);
     const winner = leaders.length === 1 ? `${leaders[0].name} さんが1位` : `${leaders.map(player => player.name).join('・')} さんが同点1位`;
     const result = game.result;
-    stage = `<section class="stage result-stage"><p class="eyebrow">GAME FINISHED</p><h2>${game.finishedReason === 'early' ? '途中終了の結果' : `${game.roundLimit}ラウンドの結果`}</h2><p class="muted center">得点に反映したラウンド: ${game.completedRounds} / ${game.roundLimit}</p>
+    stage = `<section class="stage result-stage"><p class="eyebrow">GAME FINISHED</p><h2>${game.finishedReason === 'early' ? '途中終了の結果' : game.finishedReason === 'roundLimit' ? '10ラウンド終了の結果' : `${game.winningScore}点先取の結果`}</h2><p class="muted center">得点に反映したラウンド: ${game.completedRounds}</p>
       <div class="winner-banner">${esc(winner)}</div>
       <ol class="final-ranking">${ranking.map(player => `<li><span>${ranking.findIndex(other => other.score === player.score) + 1}位　${esc(player.name)}</span><strong>${player.score}点</strong></li>`).join('')}</ol>
       ${result ? `<div class="last-result"><span class="prompt-label">最後に選ばれた回答</span><p>${esc(result.card)} <small>（${result.dummy ? 'ダミー回答' : esc(result.winnerName)}）</small></p></div>` : '<p class="muted center">進行中だったラウンドの得点は集計していません。</p>'}

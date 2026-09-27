@@ -21,7 +21,7 @@ type Game = {
   currentDescription?: number; answers: Answer[]; revealed: number; chosenIndex?: number; revealAt?: number;
   result?: { winnerId: string | null; cardId: number; dummy: boolean };
   gameNumber?: number; cpuLogs?: CpuChoiceLog[]; finishedGames?: number[];
-  completedRounds?: number; finishedReason?: 'roundLimit' | 'early';
+  completedRounds?: number; finishedReason?: 'scoreLimit' | 'roundLimit' | 'early';
 };
 
 const things = (thingsJson as { members: Card[] }).members;
@@ -34,7 +34,7 @@ const RESULT_COUNTDOWN = 3000;
 const CPU_DELAY = 900;
 const CPU_RESULT_DELAY = 3000;
 const MAX_CPU_PROMPT_LENGTH = 2000;
-const ROUND_LIMIT = 10;
+const WIN_SCORE = 5;
 const TYPESAFE_DAILY_LIMIT = 200;
 
 export class JevBudget {
@@ -190,7 +190,7 @@ export class GameRoom {
       : { index, card: null });
     return {
       id: game.id, phase: game.phase, paused: game.paused, pauseReason: game.pauseReason,
-      round: game.round, roundLimit: ROUND_LIMIT, completedRounds: game.completedRounds ?? 0, finishedReason: game.finishedReason ?? null,
+      round: game.round, winningScore: WIN_SCORE, completedRounds: game.completedRounds ?? 0, finishedReason: game.finishedReason ?? null,
       currentDescription: game.currentDescription === undefined ? null : descriptions[game.currentDescription].name,
       dealerId: game.dealerId, ownerId: game.ownerId, youId: memberId ?? null,
       youAreOwner: memberId === game.ownerId, spectator: !!me && !game.players.some(p => p.id === memberId),
@@ -303,13 +303,12 @@ export class GameRoom {
 
   private advanceRound(): void {
     const game = this.requireGame();
-    if (game.round >= ROUND_LIMIT) { this.finishGame('roundLimit'); return; }
     const current = game.players.findIndex(p => p.id === game.dealerId);
     game.dealerId = game.players[(current + 1) % game.players.length].id;
     game.round++; this.beginRound();
   }
 
-  private finishGame(reason: 'roundLimit' | 'early'): void {
+  private finishGame(reason: 'scoreLimit' | 'early'): void {
     const game = this.requireGame();
     game.phase = 'finished'; game.finishedReason = reason;
     game.paused = false; game.pauseReason = undefined;
@@ -386,7 +385,7 @@ export class GameRoom {
     if (answer.playerId) { const winner = this.player(answer.playerId); if (winner) winner.score++; }
     else { const dealer = this.player(game.dealerId); if (dealer) dealer.score = Math.max(0, dealer.score - 1); }
     game.completedRounds = (game.completedRounds ?? 0) + 1;
-    if (game.round >= ROUND_LIMIT) this.finishGame('roundLimit');
+    if (game.players.some(player => player.score >= WIN_SCORE)) this.finishGame('scoreLimit');
     else game.phase = 'roundResult';
     game.chosenIndex = undefined; game.revealAt = undefined;
   }

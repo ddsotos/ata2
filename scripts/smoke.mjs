@@ -88,7 +88,7 @@ try {
   assert.equal(spectator.state.hand.length, 0);
 
   let rounds = 0;
-  while (owner.state.phase !== 'finished' && rounds < 10) {
+  while (owner.state.phase !== 'finished' && rounds < 20) {
     rounds++;
     const dealer = peers.find(peer => peer.state.youId === owner.state.dealerId);
     const answerer = peers.find(peer => peer !== spectator && peer !== dealer);
@@ -121,12 +121,11 @@ try {
       await answerer.wait(s => s?.phase === 'selecting', 'next round for other player');
     }
   }
-  assert.equal(owner.state.phase, 'finished', 'game did not finish after ten rounds');
-  assert.equal(rounds, 10);
-  assert.equal(owner.state.completedRounds, 10);
-  assert.equal(owner.state.finishedReason, 'roundLimit');
-  assert.equal(owner.state.players.reduce((sum, player) => sum + player.score, 0), 10);
+  assert.equal(owner.state.phase, 'finished', 'game did not finish after a player reached five points');
+  assert.equal(owner.state.completedRounds, rounds);
+  assert.equal(owner.state.finishedReason, 'scoreLimit');
   const highestScore = Math.max(...owner.state.players.map(player => player.score));
+  assert.ok(highestScore >= 5);
   const winners = owner.state.players.filter(player => player.score === highestScore).map(player => player.name);
   owner.send('rematch');
   await spectator.wait(s => s?.phase === 'lobby' && !s.spectator, 'spectator promoted');
