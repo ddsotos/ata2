@@ -146,8 +146,10 @@ function connect(): void {
         scoreEffect = null;
         if (scoreEffectTimer) { window.clearTimeout(scoreEffectTimer); scoreEffectTimer = undefined; }
       }
+      const refreshCpuLogs = next.phase === 'finished' && previous?.phase !== 'finished' && cpuLogsOpen;
       if (next.phase === 'finished' && previous?.phase !== 'finished') { cpuLogs = null; selectedCpuId = null; }
       snapshot = next; renderRoom();
+      if (refreshCpuLogs) void loadCpuLogs();
     }
     else if (message.type === 'notice') { notice = message.payload?.message ?? ''; renderRoom(); }
     else if (message.type === 'removed') { notice = message.payload?.message ?? '部屋から除外されました'; renderRoom(); }
