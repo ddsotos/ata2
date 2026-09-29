@@ -10,7 +10,7 @@ type Answer = { cardId: number; playerId: string | null };
 type CpuChoiceLog = {
   gameNumber: number; round: number; cpuId: string; cpuName: string; role: 'answer' | 'dealer';
   お題?: string; theme?: string; candidates: string[]; selectedIndex: number; selectedCard: string;
-  instructions: string; source: CpuDecision['source']; reason?: string; selectedAt: string;
+  instructions: string; source: CpuDecision['source']; percentages?: number[]; reason?: string; selectedAt: string;
 };
 type Game = {
   schema: number; id: string; createdAt: number; updatedAt: number; ownerId: string;
@@ -408,7 +408,7 @@ export class GameRoom {
     (game.cpuLogs ??= []).push({
       gameNumber: game.gameNumber ?? 0, round: game.round, cpuId: player.id, cpuName: player.name,
       role, お題, candidates, selectedIndex: decision.index, selectedCard: candidates[decision.index],
-      instructions, source: decision.source, reason: decision.reason, selectedAt: new Date().toISOString(),
+      instructions, source: decision.source, percentages: decision.percentages, reason: decision.reason, selectedAt: new Date().toISOString(),
     });
   }
 

@@ -4,7 +4,7 @@ import { chooseCpuCard, chooseCpuCardDetailed, typeSafeJevBinding } from '../wor
 const calls = [];
 const ai = { async run(model, input) {
   calls.push({ model, input });
-  return { answers: { choice: { type: 'choice', choice: 'choice_2' } } };
+  return { answers: { choice: { type: 'choice', choice: 'choice_2', probabilities: { choice_0: 0.126, choice_1: 0.334, choice_2: 0.54 } } } };
 } };
 const candidates = ['大阪', '月', 'ポテトサラダ'];
 assert.equal(await chooseCpuCard(ai, '私の宝物は〇〇', candidates, 'answer'), 2);
@@ -16,7 +16,8 @@ assert.deepEqual(calls[0].input.questions.choice.criteria, { choice_0: '大阪',
 assert.equal(await chooseCpuCard(ai, '私の宝物は〇〇', candidates, 'dealer'), 2);
 assert.equal(await chooseCpuCard(ai, '私の宝物は〇〇', candidates, 'answer', 'お題との意外な相性を優先'), 2);
 assert.equal(calls[2].input.questions.choice.instructions, 'お題との意外な相性を優先');
-assert.deepEqual(await chooseCpuCardDetailed(ai, '私の宝物は〇〇', candidates, 'answer'), { index: 2, source: 'jev' });
+assert.deepEqual(await chooseCpuCardDetailed(ai, '私の宝物は〇〇', candidates, 'answer'), { index: 2, source: 'jev', percentages: [13, 33, 54] });
+assert.deepEqual(await chooseCpuCardDetailed({ run: async () => ({ answers: { choice: { choice: 'choice_1' } } }) }, '私の宝物は〇〇', candidates, 'answer'), { index: 1, source: 'jev', percentages: undefined });
 const originalFetch = globalThis.fetch;
 let typeSafeRequest;
 globalThis.fetch = async (url, options) => {

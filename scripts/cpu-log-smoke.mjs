@@ -72,6 +72,7 @@ try {
     assert.equal(entry.selectedCard, entry.candidates[entry.selectedIndex]);
     assert.ok(entry.お題 && entry.instructions && entry.selectedAt);
     assert.ok(['jev', 'random'].includes(entry.source));
+    if (entry.source === 'random') assert.equal(entry.percentages, undefined);
   }
   send('rematch');
   await wait(s => s?.phase === 'lobby', 'rematch lobby');

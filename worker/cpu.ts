@@ -2,7 +2,7 @@ import prompts from '../data/jev_prompts.json' with { type: 'json' };
 
 export type JevBinding = { run(model: string, input: unknown): Promise<unknown> };
 export type CpuPrompts = { answer: string; dealer: string };
-export type CpuDecision = { index: number; source: 'jev' | 'random'; reason?: string };
+export type CpuDecision = { index: number; source: 'jev' | 'random'; percentages?: number[]; reason?: string };
 export const defaultCpuPrompts: CpuPrompts = { answer: prompts.answer, dealer: prompts.dealer };
 
 export function typeSafeJevBinding(apiKey: string): JevBinding {
@@ -56,12 +56,16 @@ export async function chooseCpuCardDetailed(
     const response = await Promise.race([
       request,
       new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Jev timed out')), 4000); }),
-    ]).finally(() => { if (timeout) clearTimeout(timeout); }) as { answers?: { choice?: { choice?: unknown } } };
-    const choice = response.answers?.choice?.choice;
+    ]).finally(() => { if (timeout) clearTimeout(timeout); }) as { answers?: { choice?: { choice?: unknown; probabilities?: Record<string, unknown> } } };
+    const answer = response.answers?.choice;
+    const choice = answer?.choice;
     const index = typeof choice === 'string' && /^choice_\d+$/.test(choice) ? Number(choice.slice(7)) : -1;
     if (index >= 0 && index < candidates.length) {
+      const probabilities = candidates.map((_, candidateIndex) => answer?.probabilities?.[`choice_${candidateIndex}`]);
+      const percentages = probabilities.every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1)
+        ? (probabilities as number[]).map(value => Math.round(value * 100)) : undefined;
       console.info('CPU Jev choice accepted', { role, choice });
-      return { index, source: 'jev' };
+      return { index, source: 'jev', percentages };
     }
     console.warn('CPU Jev returned an invalid choice', { role, choice });
   } catch (error) {
