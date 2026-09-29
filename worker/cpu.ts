@@ -20,9 +20,9 @@ export function typeSafeJevBinding(apiKey: string): JevBinding {
   };
 }
 
-export function createCpuJevInput(theme: string, candidates: string[], role: 'answer' | 'dealer', instructions = defaultCpuPrompts[role]) {
+export function createCpuJevInput(お題: string, candidates: string[], role: 'answer' | 'dealer', instructions = defaultCpuPrompts[role]) {
   return {
-    state: { theme, choices: candidates },
+    state: { お題, choices: candidates },
     questions: {
       choice: {
         type: 'choice',
@@ -41,7 +41,7 @@ function randomChoice(count: number): number {
 
 export async function chooseCpuCardDetailed(
   ai: JevBinding | undefined,
-  theme: string,
+  お題: string,
   candidates: string[],
   role: 'answer' | 'dealer',
   instructions = defaultCpuPrompts[role],
@@ -52,7 +52,7 @@ export async function chooseCpuCardDetailed(
   try {
     if (!ai) throw new Error('Jev binding unavailable');
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    const request = ai.run('typesafe/jev', createCpuJevInput(theme, candidates, role, instructions));
+    const request = ai.run('typesafe/jev', createCpuJevInput(お題, candidates, role, instructions));
     const response = await Promise.race([
       request,
       new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Jev timed out')), 4000); }),
@@ -74,10 +74,10 @@ export async function chooseCpuCardDetailed(
 
 export async function chooseCpuCard(
   ai: JevBinding | undefined,
-  theme: string,
+  お題: string,
   candidates: string[],
   role: 'answer' | 'dealer',
   instructions = defaultCpuPrompts[role],
 ): Promise<number> {
-  return (await chooseCpuCardDetailed(ai, theme, candidates, role, instructions)).index;
+  return (await chooseCpuCardDetailed(ai, お題, candidates, role, instructions)).index;
 }

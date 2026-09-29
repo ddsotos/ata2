@@ -20,22 +20,22 @@ async function loadSample(newCombination) {
     readFile(new URL('../data/jev_prompts.json', import.meta.url), 'utf8').then(JSON.parse),
   ]);
   const cards = things.members.map(card => card.name).filter(name => typeof name === 'string' && name);
-  const themes = descriptions.members.map(card => card.name).filter(name => typeof name === 'string' && name);
-  if (cards.length < 5 || !themes.length || typeof prompts.answer !== 'string' || typeof prompts.dealer !== 'string') {
+  const topics = descriptions.members.map(card => card.name).filter(name => typeof name === 'string' && name);
+  if (cards.length < 5 || !topics.length || typeof prompts.answer !== 'string' || typeof prompts.dealer !== 'string') {
     throw new Error('カード・お題・指示文のJSONを確認してください');
   }
-  if (newCombination || !sample || sample.cardIndices.some(index => index >= cards.length) || sample.themeIndex >= themes.length) {
+  if (newCombination || !sample || sample.cardIndices.some(index => index >= cards.length) || sample.topicIndex >= topics.length) {
     const picked = new Set();
     while (picked.size < 5) picked.add(randomInt(cards.length));
-    sample = { themeIndex: randomInt(themes.length), cardIndices: [...picked] };
+    sample = { topicIndex: randomInt(topics.length), cardIndices: [...picked] };
   }
-  const theme = themes[sample.themeIndex];
+  const お題 = topics[sample.topicIndex];
   const candidates = sample.cardIndices.map(index => cards[index]);
-  const answer = createCpuJevInput(theme, candidates, 'answer');
-  const dealer = createCpuJevInput(theme, candidates, 'dealer');
+  const answer = createCpuJevInput(お題, candidates, 'answer');
+  const dealer = createCpuJevInput(お題, candidates, 'dealer');
   answer.questions.choice.instructions = prompts.answer;
   dealer.questions.choice.instructions = prompts.dealer;
-  return { answer, dealer, source: { cards: 'data/ata_things.json', themes: 'data/ata_descriptions.json', instructions: 'data/jev_prompts.json' } };
+  return { answer, dealer, source: { cards: 'data/ata_things.json', お題: 'data/ata_descriptions.json', instructions: 'data/jev_prompts.json' } };
 }
 
 function sendJson(response, status, data) {

@@ -10,6 +10,7 @@ const candidates = ['大阪', '月', 'ポテトサラダ'];
 assert.equal(await chooseCpuCard(ai, '私の宝物は〇〇', candidates, 'answer'), 2);
 assert.equal(calls[0].model, 'typesafe/jev');
 assert.equal(calls[0].input.questions.choice.type, 'choice');
+assert.equal(calls[0].input.state.お題, '私の宝物は〇〇');
 assert.deepEqual(calls[0].input.state.choices, candidates);
 assert.deepEqual(calls[0].input.questions.choice.criteria, { choice_0: '大阪', choice_1: '月', choice_2: 'ポテトサラダ' });
 assert.equal(await chooseCpuCard(ai, '私の宝物は〇〇', candidates, 'dealer'), 2);
@@ -26,6 +27,7 @@ try {
   assert.equal(await chooseCpuCard(typeSafeJevBinding('test-key'), '私の宝物は〇〇', candidates, 'answer', '独自指示'), 1);
   assert.equal(typeSafeRequest.url, 'https://api.typesafe.ai/v1/systemone');
   assert.equal(typeSafeRequest.options.headers.Authorization, 'Bearer test-key');
+  assert.equal(JSON.parse(typeSafeRequest.options.body).state.お題, '私の宝物は〇〇');
   assert.equal(JSON.parse(typeSafeRequest.options.body).questions.choice.instructions, '独自指示');
   assert.equal(JSON.parse(typeSafeRequest.options.body).model, 'jev-latest');
 } finally { globalThis.fetch = originalFetch; }

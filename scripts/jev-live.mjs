@@ -1,8 +1,8 @@
 import { createCpuJevInput } from '../worker/cpu.ts';
 
 const candidates = ['宇宙人', '給食', 'Wi-Fi', '校長先生', '冷蔵庫'];
-const theme = '私の秘密の才能は＿＿です。';
-const input = createCpuJevInput(theme, candidates, 'answer');
+const お題 = '私の秘密の才能は＿＿です。';
+const input = createCpuJevInput(お題, candidates, 'answer');
 
 let url;
 let headers;

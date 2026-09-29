@@ -9,7 +9,7 @@ type Player = Member & { spectator: false; score: number; hand: number[]; select
 type Answer = { cardId: number; playerId: string | null };
 type CpuChoiceLog = {
   gameNumber: number; round: number; cpuId: string; cpuName: string; role: 'answer' | 'dealer';
-  theme: string; candidates: string[]; selectedIndex: number; selectedCard: string;
+  お題?: string; theme?: string; candidates: string[]; selectedIndex: number; selectedCard: string;
   instructions: string; source: CpuDecision['source']; reason?: string; selectedAt: string;
 };
 type Game = {
@@ -190,6 +190,20 @@ export class GameRoom {
     this.env = env;
     this.ready = state.blockConcurrencyWhile(async () => {
       this.game = await state.storage.get<Game>('game');
+      if (this.game) {
+        let changed = false;
+        for (const player of this.game.players) {
+          if (!player.cpuPrompts) continue;
+          for (const role of ['answer', 'dealer'] as const) {
+            const updated = player.cpuPrompts[role].replaceAll('theme', 'お題');
+            if (updated !== player.cpuPrompts[role]) {
+              player.cpuPrompts[role] = updated;
+              changed = true;
+            }
+          }
+        }
+        if (changed) await state.storage.put('game', this.game);
+      }
     });
   }
 
@@ -359,41 +373,41 @@ export class GameRoom {
     if (game.phase === 'selecting') {
       const player = game.players.find(p => p.cpu && p.id !== game.dealerId && p.selection === undefined)!;
       const round = game.round; const hand = [...player.hand];
-      const theme = descriptions[game.currentDescription!].name;
+      const お題 = descriptions[game.currentDescription!].name;
       const candidates = hand.map(id => things[id].name);
       const instructions = (player.cpuPrompts ?? defaultCpuPrompts).answer;
       const ai = this.cpuAi();
-      const decision = await chooseCpuCardDetailed(ai, theme, candidates, 'answer', instructions);
+      const decision = await chooseCpuCardDetailed(ai, お題, candidates, 'answer', instructions);
       if (this.game !== game || game.paused || game.phase !== 'selecting' || game.round !== round || !game.players.includes(player) || player.selection !== undefined) return;
       const cardId = hand[decision.index];
       if (player.hand.includes(cardId)) {
         this.selectCard(player, cardId);
-        this.recordCpuChoice(player, 'answer', theme, candidates, instructions, decision);
+        this.recordCpuChoice(player, 'answer', お題, candidates, instructions, decision);
       }
       return;
     }
     if (game.phase === 'reveal') {
       if (game.revealed < game.answers.length) { game.revealed++; return; }
       const round = game.round; const answers = game.answers;
-      const theme = descriptions[game.currentDescription!].name;
+      const お題 = descriptions[game.currentDescription!].name;
       const dealer = game.players.find(p => p.id === game.dealerId)!;
       const candidates = answers.map(answer => things[answer.cardId].name);
       const instructions = (dealer.cpuPrompts ?? defaultCpuPrompts).dealer;
       const ai = this.cpuAi();
-      const decision = await chooseCpuCardDetailed(ai, theme, candidates, 'dealer', instructions);
+      const decision = await chooseCpuCardDetailed(ai, お題, candidates, 'dealer', instructions);
       if (this.game !== game || game.paused || game.phase !== 'reveal' || game.round !== round || game.answers !== answers || game.revealed !== answers.length) return;
       this.chooseAnswer(decision.index);
-      this.recordCpuChoice(dealer, 'dealer', theme, candidates, instructions, decision);
+      this.recordCpuChoice(dealer, 'dealer', お題, candidates, instructions, decision);
       return;
     }
     if (game.phase === 'roundResult') this.advanceRound();
   }
 
-  private recordCpuChoice(player: Player, role: 'answer' | 'dealer', theme: string, candidates: string[], instructions: string, decision: CpuDecision): void {
+  private recordCpuChoice(player: Player, role: 'answer' | 'dealer', お題: string, candidates: string[], instructions: string, decision: CpuDecision): void {
     const game = this.requireGame();
     (game.cpuLogs ??= []).push({
       gameNumber: game.gameNumber ?? 0, round: game.round, cpuId: player.id, cpuName: player.name,
-      role, theme, candidates, selectedIndex: decision.index, selectedCard: candidates[decision.index],
+      role, お題, candidates, selectedIndex: decision.index, selectedCard: candidates[decision.index],
       instructions, source: decision.source, reason: decision.reason, selectedAt: new Date().toISOString(),
     });
   }
@@ -465,7 +479,7 @@ export class GameRoom {
         if (![...game.players, ...game.spectators].some(member => member.tokenHash === tokenHash)) return json({ error: '参加情報が無効です' }, 403);
         const finished = new Set(game.finishedGames ?? []);
         if (!finished.size) return json({ error: 'ゲーム終了後に閲覧できます' }, 409);
-        return json({ roomId: game.id, entries: (game.cpuLogs ?? []).filter(entry => finished.has(entry.gameNumber)) });
+        return json({ roomId: game.id, entries: (game.cpuLogs ?? []).filter(entry => finished.has(entry.gameNumber)).map(({ theme, ...entry }) => ({ ...entry, お題: entry.お題 ?? theme })) });
       }
       if (url.pathname === '/jev-budget' || url.pathname === '/jev-budget/reset') {
         const token = request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];

@@ -70,7 +70,7 @@ try {
   for (const entry of log.entries) {
     assert.equal(entry.cpuId, cpuId);
     assert.equal(entry.selectedCard, entry.candidates[entry.selectedIndex]);
-    assert.ok(entry.theme && entry.instructions && entry.selectedAt);
+    assert.ok(entry.お題 && entry.instructions && entry.selectedAt);
     assert.ok(['jev', 'random'].includes(entry.source));
   }
   send('rematch');

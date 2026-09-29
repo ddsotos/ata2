@@ -27,7 +27,7 @@ try {
   assert.equal(state.players[1].cpu, true);
   assert.equal(state.players[1].ready, true);
   assert.equal(state.players[1].online, true);
-  assert.ok(state.cpuDefaults.answer.includes('themeとの噛み合い'));
+  assert.ok(state.cpuDefaults.answer.includes('お題との噛み合い'));
   assert.equal(state.cpuPrompts[state.players[1].id].answer, state.cpuDefaults.answer);
   const publicView = await (await fetch(`${base}/api/rooms/${room.roomId}`)).json();
   assert.equal(publicView.cpuPrompts, undefined, 'CPU instructions should only be sent to the owner');

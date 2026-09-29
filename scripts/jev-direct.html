@@ -49,7 +49,7 @@
         <div class="row"><button type="button" id="preset-answer">回答する CPU</button><button type="button" id="preset-dealer">親の CPU</button></div>
         <div class="row"><button type="button" id="reset-json">JSONから元に戻す</button><button type="button" id="shuffle-json">JSONから別の組み合わせ</button></div>
         <p class="hint">候補は ata_things.json、お題は ata_descriptions.json、指示文は jev_prompts.json から読みます。「元に戻す」は同じ候補を再取得します。</p>
-        <label for="theme">お題</label><input id="theme" type="text">
+        <label for="odai">お題</label><input id="odai" type="text">
         <label for="cards">候補カード（1行に1枚）</label><textarea id="cards"></textarea>
         <label for="instructions">指示文</label><textarea id="instructions"></textarea>
         <div class="row"><button type="button" id="apply-fields">入力欄を JSON に反映</button></div>
@@ -83,7 +83,7 @@
     if (!presets) return;
     activeRole = role;
     const input = structuredClone(presets[role]);
-    $('#theme').value = input.state.theme;
+    $('#odai').value = input.state.お題;
     $('#cards').value = input.state.choices.join('\n');
     $('#instructions').value = input.questions.choice.instructions;
     $('#request').value = JSON.stringify(input, null, 2);
@@ -114,7 +114,7 @@
     let input;
     try { input = JSON.parse($('#request').value); }
     catch { input = structuredClone(presets?.[activeRole] ?? { state: {}, questions: {} }); }
-    input.state = { theme: $('#theme').value, choices: cards };
+    input.state = { お題: $('#odai').value, choices: cards };
     input.questions ??= {};
     delete input.questions.card;
     input.questions.choice = {

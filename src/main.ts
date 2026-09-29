@@ -6,7 +6,7 @@ type Player = { id: string; name: string; score: number; ready: boolean; online:
 type CpuPrompts = { answer: string; dealer: string };
 type CpuLogEntry = {
   gameNumber: number; round: number; cpuId: string; cpuName: string; role: 'answer' | 'dealer';
-  theme: string; candidates: string[]; selectedIndex: number; selectedCard: string;
+  お題: string; candidates: string[]; selectedIndex: number; selectedCard: string;
   instructions: string; source: 'jev' | 'random'; reason?: string; selectedAt: string;
 };
 type CpuLogsResponse = { roomId: string; entries: CpuLogEntry[] };
@@ -207,7 +207,7 @@ function cpuLogPanel(game: Snapshot): string {
     const entries = cpuLogs.entries.filter(entry => entry.cpuId === cpuId);
     body = `<div class="cpu-log-tabs">${cpus.map(([id, name]) => `<button type="button" class="button ${id === cpuId ? 'primary' : 'secondary'}" data-cpu-log="${esc(id)}" aria-pressed="${id === cpuId}">${esc(name)}</button>`).join('')}</div>
       <div class="cpu-log-actions"><span>${entries.length}件の選択</span><button class="button secondary" id="download-cpu-log" data-cpu-id="${esc(cpuId)}">このCPUのログをJSONで保存</button></div>
-      <ol class="cpu-log-list">${entries.map(entry => `<li class="cpu-log-entry"><div class="cpu-log-meta"><b>ゲーム ${entry.gameNumber}・ROUND ${entry.round}・${entry.role === 'answer' ? '回答側' : '親'}</b><time>${esc(new Date(entry.selectedAt).toLocaleString('ja-JP'))}</time></div><p><strong>お題</strong> ${esc(entry.theme)}</p><p><strong>選択</strong> ${esc(entry.selectedCard)} <span class="cpu-log-source">${entry.source === 'jev' ? 'Jev' : 'ランダム代替'}</span></p><details><summary>候補と指示文を見る</summary><ol class="cpu-log-candidates">${entry.candidates.map((card, index) => `<li ${index === entry.selectedIndex ? 'class="selected"' : ''}>${esc(card)}${index === entry.selectedIndex ? ' ✓' : ''}</li>`).join('')}</ol><p><strong>指示文</strong> ${esc(entry.instructions)}</p>${entry.reason ? `<p><strong>代替理由</strong> ${esc(entry.reason)}</p>` : ''}</details></li>`).join('')}</ol>`;
+      <ol class="cpu-log-list">${entries.map(entry => `<li class="cpu-log-entry"><div class="cpu-log-meta"><b>ゲーム ${entry.gameNumber}・ROUND ${entry.round}・${entry.role === 'answer' ? '回答側' : '親'}</b><time>${esc(new Date(entry.selectedAt).toLocaleString('ja-JP'))}</time></div><p><strong>お題</strong> ${esc(entry.お題)}</p><p><strong>選択</strong> ${esc(entry.selectedCard)} <span class="cpu-log-source">${entry.source === 'jev' ? 'Jev' : 'ランダム代替'}</span></p><details><summary>候補と指示文を見る</summary><ol class="cpu-log-candidates">${entry.candidates.map((card, index) => `<li ${index === entry.selectedIndex ? 'class="selected"' : ''}>${esc(card)}${index === entry.selectedIndex ? ' ✓' : ''}</li>`).join('')}</ol><p><strong>指示文</strong> ${esc(entry.instructions)}</p>${entry.reason ? `<p><strong>代替理由</strong> ${esc(entry.reason)}</p>` : ''}</details></li>`).join('')}</ol>`;
   }
   return `<section class="stage cpu-log-panel"><div class="cpu-log-heading"><div><p class="eyebrow">CPU LOG</p><h2>CPUの選択履歴</h2></div><button class="button secondary" id="close-cpu-logs">閉じる</button></div><p class="muted">終了したゲームの記録だけを表示します。部屋の有効期限内にJSONを保存してください。</p>${body}</section>`;
 }
